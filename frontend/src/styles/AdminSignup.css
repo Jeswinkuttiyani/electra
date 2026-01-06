@@ -1,0 +1,108 @@
+/* Admin Signup Page Styles */
+
+.password-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-input-wrapper input {
+  flex: 1;
+  padding-right: 50px;
+}
+
+.toggle-password {
+  position: absolute;
+  right: 12px;
+  background: none;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 8px;
+  transition: color 0.3s ease;
+}
+
+.toggle-password:hover:not(:disabled) {
+  color: #2196F3;
+}
+
+.toggle-password:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.password-requirements {
+  background-color: #f5f5f5;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 12px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.requirements-title {
+  margin: 0 0 8px 0;
+  font-weight: 600;
+  color: #333;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.password-requirements ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.password-requirements li {
+  padding: 4px 0 4px 20px;
+  position: relative;
+  color: #666;
+  font-size: 12px;
+  transition: color 0.3s ease;
+}
+
+.password-requirements li:before {
+  content: "✗";
+  position: absolute;
+  left: 0;
+  color: #ff6b6b;
+  font-weight: bold;
+}
+
+.password-requirements li.valid {
+  color: #4CAF50;
+}
+
+.password-requirements li.valid:before {
+  content: "✓";
+  color: #4CAF50;
+}
+
+.error-text {
+  color: #ff6b6b;
+  font-size: 12px;
+  margin-top: 6px;
+  display: block;
+}
+
+.success-text {
+  color: #4CAF50;
+  font-size: 12px;
+  margin-top: 6px;
+  display: block;
+}
+
+/* Ensure auth button is disabled with proper styling */
+.auth-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background-color: #ccc;
+}
+
+.auth-button:disabled:hover {
+  background-color: #ccc;
+}
