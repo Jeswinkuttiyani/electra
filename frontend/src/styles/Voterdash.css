@@ -71,6 +71,7 @@ body, html, #root { height: 100%; }
   color: #0b2340;
   margin: 0 0 16px 0;
 }
+.vd-section-title--compact { margin-bottom: 10px; font-size: 20px; }
 
 /* Notifications Section */
 .vd-notifications {
@@ -272,23 +273,7 @@ body, html, #root { height: 100%; }
   flex: 1;
 }
 
-.vd-tile-btn {
-  background: #1e4f8a;
-  color: white;
-  border: none;
-  padding: 12px 28px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-weight: 700;
-  font-size: 14px;
-  transition: background 0.3s;
-  width: 100%;
-  max-width: 200px;
-}
-
-.vd-tile-btn:hover {
-  background: #163d6b;
-}
+/* consolidated .vd-tile-btn rules are defined near Action buttons to avoid duplication */
 
 /* Footer */
 .vd-footer {
@@ -474,9 +459,14 @@ body, html, #root { height: 100%; }
   border: none;
   cursor: pointer;
   font-weight: 700;
+  display: inline-block;
+  transition: filter 0.12s ease, transform 0.12s ease;
 }
 
-.vd-tile-btn:hover { filter: brightness(0.95); }
+.vd-tile-btn:hover { filter: brightness(0.95); transform: translateY(-1px); }
+
+/* utility modifier for full-width usage */
+.vd-tile-btn.fullwidth { width: 100%; max-width: 200px; }
 
 .btn-cancel {
   background: #ffffff;
@@ -489,6 +479,33 @@ body, html, #root { height: 100%; }
 }
 
 .btn-cancel:hover { background: #f8fafc; }
+
+/* Utilities for AdminCandidateApplications */
+.vd-card--spaced { margin-bottom: 16px; }
+.filters-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.filter-field { min-width: 200px; display: flex; flex-direction: column; }
+.filter-field.wide { min-width: 260px; }
+.filter-label { font-weight: 700; margin-bottom: 6px; color: #0b2340; }
+.filters-actions { margin-left: auto; }
+.form-error { margin-top: 12px; color: #b42318; font-weight: 700; }
+.table-wrapper { overflow-x: auto; }
+.status-cell { font-weight: 800; }
+.docs-list { display: flex; flex-direction: column; gap: 6px; }
+.doc-link { color: #1e4f8a; font-weight: 600; text-decoration: none; }
+.doc-link:hover { text-decoration: underline; }
+.empty-state { font-weight: 700; color: #0b2340; }
+
+/* Improve admin edit actions layout */
+.admin-edit-actions { display: flex; gap: 12px; margin-top: 12px; }
+
+@media (max-width: 480px) {
+  .filter-field, .filter-field.wide { min-width: auto; width: 100%; }
+  .filters-actions { margin-left: 0; }
+}
+
+/* small utility */
+.grow { flex: 1; }
+
 
 /* Admin edit panel */
 .admin-edit-card {

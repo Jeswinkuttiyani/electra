@@ -111,11 +111,11 @@ function AdminCandidateApplications() {
       <main className="vd-main">
         <h2 className="vd-section-title">Candidate Applications</h2>
 
-        <section className="vd-notifications-list" style={{ marginBottom: 16 }}>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <div style={{ minWidth: 200 }}>
-              <div style={{ fontWeight: 700, marginBottom: 6, color: "#0b2340" }}>Status</div>
-              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ width: "100%" }}>
+        <section className="vd-notifications-list vd-card--spaced">
+          <div className="filters-row">
+            <div className="filter-field">
+              <label className="filter-label">Status</label>
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="report-select">
                 <option value="">All</option>
                 <option value="Pending">Pending</option>
                 <option value="Approved">Approved</option>
@@ -123,9 +123,9 @@ function AdminCandidateApplications() {
               </select>
             </div>
 
-            <div style={{ minWidth: 260 }}>
-              <div style={{ fontWeight: 700, marginBottom: 6, color: "#0b2340" }}>Position</div>
-              <select value={positionFilter} onChange={(e) => setPositionFilter(e.target.value)} style={{ width: "100%" }}>
+            <div className="filter-field wide">
+              <label className="filter-label">Position</label>
+              <select value={positionFilter} onChange={(e) => setPositionFilter(e.target.value)} className="report-select">
                 <option value="">All</option>
                 {positions.map((p) => (
                   <option key={p} value={p}>
@@ -135,26 +135,24 @@ function AdminCandidateApplications() {
               </select>
             </div>
 
-            <div style={{ marginLeft: "auto" }}>
+            <div className="filters-actions">
               <button className="vd-tile-btn" onClick={fetchApplications} disabled={loading}>
                 Refresh
               </button>
             </div>
           </div>
 
-          {error ? (
-            <div style={{ marginTop: 12, color: "#b42318", fontWeight: 700 }}>{error}</div>
-          ) : null}
+          {error ? <div className="form-error">{error}</div> : null}
         </section>
 
         <section className="vd-notifications-list">
           {loading ? (
-            <div style={{ fontWeight: 700, color: "#0b2340" }}>Loading applications...</div>
+            <div className="empty-state">Loading applications...</div>
           ) : applications.length === 0 ? (
-            <div style={{ fontWeight: 700, color: "#0b2340" }}>No applications found.</div>
+            <div className="empty-state">No applications found.</div>
           ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table className="vd-table">
+            <div className="table-wrapper">
+              <table className="voters-table">
                 <thead>
                   <tr>
                     <th>Reference</th>
@@ -178,22 +176,22 @@ function AdminCandidateApplications() {
                         <td>{a.full_name || "-"}</td>
                         <td>{a.branch_name || "-"}</td>
                         <td>{a.position || "-"}</td>
-                        <td style={{ fontWeight: 800 }}>{a.status || "-"}</td>
+                        <td className="status-cell">{a.status || "-"}</td>
                         <td>{a.applied_at ? new Date(a.applied_at).toLocaleString() : "-"}</td>
                         <td>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          <div className="docs-list">
                             {docs.identity_proof ? (
-                              <a href={toAbsUrl(docs.identity_proof)} target="_blank" rel="noreferrer">Identity</a>
+                              <a className="doc-link" href={toAbsUrl(docs.identity_proof)} target="_blank" rel="noreferrer">Identity</a>
                             ) : (
                               <span>-</span>
                             )}
                             {docs.membership_proof ? (
-                              <a href={toAbsUrl(docs.membership_proof)} target="_blank" rel="noreferrer">Membership</a>
+                              <a className="doc-link" href={toAbsUrl(docs.membership_proof)} target="_blank" rel="noreferrer">Membership</a>
                             ) : (
                               <span>-</span>
                             )}
                             {docs.supporting_document ? (
-                              <a href={toAbsUrl(docs.supporting_document)} target="_blank" rel="noreferrer">Supporting</a>
+                              <a className="doc-link" href={toAbsUrl(docs.supporting_document)} target="_blank" rel="noreferrer">Supporting</a>
                             ) : null}
                           </div>
                         </td>
@@ -212,29 +210,29 @@ function AdminCandidateApplications() {
         </section>
 
         {reviewingId ? (
-          <section className="vd-notifications-list" style={{ marginTop: 16 }}>
-            <h3 className="vd-section-title" style={{ marginBottom: 10 }}>Review Application</h3>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ minWidth: 220 }}>
-                <div style={{ fontWeight: 700, marginBottom: 6, color: "#0b2340" }}>Decision</div>
-                <select value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value)} style={{ width: "100%" }}>
+          <section className="vd-notifications-list vd-card--spaced">
+            <h3 className="vd-section-title vd-section-title--compact">Review Application</h3>
+            <div className="report-form">
+              <div className="admin-edit-field">
+                <label className="filter-label">Decision</label>
+                <select value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value)} className="report-select">
                   <option value="Approved">Approve</option>
                   <option value="Rejected">Reject</option>
                 </select>
               </div>
 
-              <div style={{ flex: 1, minWidth: 260 }}>
-                <div style={{ fontWeight: 700, marginBottom: 6, color: "#0b2340" }}>Admin Remarks</div>
+              <div className="admin-edit-field grow">
+                <label className="filter-label">Admin Remarks</label>
                 <input
                   value={adminRemarks}
                   onChange={(e) => setAdminRemarks(e.target.value)}
                   placeholder="Optional remarks (required if rejecting, recommended)"
-                  style={{ width: "100%" }}
+                  className="report-input"
                 />
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+            <div className="admin-edit-actions">
               <button className="vd-tile-btn" onClick={submitReview} disabled={saving}>
                 {saving ? "Saving..." : "Save"}
               </button>
