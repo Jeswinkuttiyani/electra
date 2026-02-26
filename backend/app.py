@@ -11,6 +11,7 @@ import datetime
 import base64
 import json
 import uuid
+import blockchain
 
 # Load environment variables
 load_dotenv()
@@ -55,6 +56,8 @@ otp_storage = db["otp_storage"]  # Collection for OTP verification
 reports = db["reports"]  # Collection for voter error reports
 candidate_applications = db["candidate_applications"]
 election_config = db["election_config"]
+blockchain_config = db["blockchain_config"]
+votes = db["votes"] 
 
 try:
     candidate_applications.create_index([("voter_id", 1)], unique=True)
@@ -1605,7 +1608,277 @@ def update_voter(voter_id):
         return jsonify({"success": False, "message": f"Failed to update voter: {str(e)}"}), 500
 
 
+# ─── Blockchain Voting API ──────────────────────────────────────────────
+
+@app.route("/api/blockchain/status", methods=["GET"])
+def get_blockchain_status():
+    """Get general status of the blockchain connection and contract."""
+    connected = blockchain.is_connected()
+    config = blockchain_config.find_one({"key": "active_contract"})
+    
+    out = {
+        "success": True,
+        "ganache_connected": connected,
+        "contract_deployed": bool(config),
+        "contract_address": config.get("address") if config else None,
+        "voting_open": False,
+        "candidate_count": 0,
+        "total_votes": 0
+    }
+
+    if connected and config:
+        try:
+            status = blockchain.get_status(config["address"])
+            out.update(status)
+        except Exception:
+            pass
+            
+    return jsonify(out), 200
+
+
+@app.route("/api/blockchain/deploy", methods=["POST"])
+def deploy_blockchain_contract():
+    """Deploy the Election contract to Ganache (Admin only)."""
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response: return error_response, status_code
+    if user.get("user_type") != "admin":
+        return jsonify({"success": False, "message": "Only admins can deploy contract"}), 403
+
+    try:
+        result = blockchain.deploy_contract()
+        # Save to DB
+        blockchain_config.update_one(
+            {"key": "active_contract"},
+            {"$set": {
+                "address": result["contract_address"],
+                "admin_address": result["admin_address"],
+                "deployed_at": datetime.datetime.utcnow(),
+                "tx_hash": result["tx_hash"]
+            }},
+            upsert=True
+        )
+        return jsonify({
+            "success": True, 
+            "message": "Contract deployed successfully",
+            "contract_address": result["contract_address"],
+            "tx_hash": result["tx_hash"]
+        }), 201
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/api/blockchain/add-candidates", methods=["POST"])
+def sync_candidates_to_blockchain():
+    """Sync approved candidate applications to the blockchain (Admin only)."""
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response: return error_response, status_code
+    if user.get("user_type") != "admin":
+        return jsonify({"success": False, "message": "Only admins can sync candidates"}), 403
+
+    config = blockchain_config.find_one({"key": "active_contract"})
+    if not config:
+        return jsonify({"success": False, "message": "No contract deployed"}), 400
+
+    try:
+        # Get all approved candidates
+        approved_apps = list(candidate_applications.find({"status": "Approved"}))
+        if not approved_apps:
+            return jsonify({"success": False, "message": "No approved candidates to sync"}), 400
+
+        # Get existing candidates on chain to avoid duplicates (simplified)
+        on_chain = blockchain.get_candidates(config["address"])
+        on_chain_names = {c["name"] for c in on_chain}
+
+        synced_count = 0
+        tx_hashes = []
+
+        for app in approved_apps:
+            name = app.get("full_name")
+            if name in on_chain_names: continue
+            
+            res = blockchain.add_candidate(
+                config["address"], 
+                name, 
+                app.get("position", "Standard"), 
+                app.get("symbol", "None")
+            )
+            tx_hashes.append(res["tx_hash"])
+            synced_count += 1
+
+        return jsonify({
+            "success": True, 
+            "message": f"Synced {synced_count} candidates",
+            "tx_hashes": tx_hashes
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/api/blockchain/start-voting", methods=["POST"])
+def start_blockchain_voting():
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response: return error_response, status_code
+    if user.get("user_type") != "admin": return jsonify({"success": False, "message": "Admin only"}), 403
+
+    config = blockchain_config.find_one({"key": "active_contract"})
+    if not config: return jsonify({"success": False, "message": "No contract"}), 400
+
+    try:
+        res = blockchain.start_voting(config["address"])
+        return jsonify({"success": True, "message": "Voting started", "tx_hash": res["tx_hash"]}), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/api/blockchain/end-voting", methods=["POST"])
+def end_blockchain_voting():
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response: return error_response, status_code
+    if user.get("user_type") != "admin": return jsonify({"success": False, "message": "Admin only"}), 403
+
+    config = blockchain_config.find_one({"key": "active_contract"})
+    if not config: return jsonify({"success": False, "message": "No contract"}), 400
+
+    try:
+        res = blockchain.end_voting(config["address"])
+        return jsonify({"success": True, "message": "Voting ended", "tx_hash": res["tx_hash"]}), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/api/blockchain/candidates", methods=["GET"])
+def get_blockchain_candidates():
+    config = blockchain_config.find_one({"key": "active_contract"})
+    if not config:
+        return jsonify({"success": True, "candidates": []}), 200
+    
+    try:
+        candidates = blockchain.get_candidates(config["address"])
+        # Merge with MongoDB data for photos/details
+        for c in candidates:
+            app = candidate_applications.find_one({"full_name": c["name"], "status": "Approved"})
+            if app:
+                c["candidate_photo_url"] = app.get("candidate_photo_url")
+                c["branch_name"] = app.get("branch_name")
+                c["statement"] = app.get("statement")
+        
+        return jsonify({"success": True, "candidates": candidates}), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/api/blockchain/voter-status", methods=["GET"])
+def get_voter_blockchain_status():
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response: return error_response, status_code
+
+    voter_id = user.get("voter_id")
+    if not voter_id:
+        return jsonify({"success": False, "message": "Not a registered voter"}), 400
+
+    config = blockchain_config.find_one({"key": "active_contract"})
+    if not config:
+        return jsonify({"success": True, "has_voted": False}), 200
+
+    # Derive Ganache address from DB index or just use the blockchain.py helper
+    # For simulation, we'll try to find if they've voted in our Mongo 'votes' collection first
+    vote_record = votes.find_one({"voter_id": voter_id})
+    
+    return jsonify({
+        "success": True, 
+        "has_voted": bool(vote_record),
+        "tx_hash": vote_record.get("tx_hash") if vote_record else None
+    }), 200
+
+
+@app.route("/api/blockchain/cast-vote", methods=["POST"])
+def cast_blockchain_vote():
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response: return error_response, status_code
+    
+    if user.get("user_type") != "voter":
+        return jsonify({"success": False, "message": "Only voters can cast votes"}), 403
+
+    voter_id = user.get("voter_id")
+    data = request.json or {}
+    candidate_id = data.get("candidate_id")
+
+    if candidate_id is None:
+        return jsonify({"success": False, "message": "candidate_id required"}), 400
+
+    config = blockchain_config.find_one({"key": "active_contract"})
+    if not config:
+        return jsonify({"success": False, "message": "Election not initialized"}), 400
+
+    # Prevent double voting in MongoDB
+    if votes.find_one({"voter_id": voter_id}):
+        return jsonify({"success": False, "message": "You have already cast your vote"}), 400
+
+    try:
+        # Determine eth address for this voter (simulated)
+        # We'll use a simple deterministic mapping from their MongoDB Oid or VoterID
+        voter_idx = int(voter_id.replace("SJC", "")) % 9 if "SJC" in voter_id else 1
+        voter_eth_addr = blockchain._voter_address(voter_idx)
+
+        res = blockchain.cast_vote(config["address"], int(candidate_id), voter_eth_addr)
+        
+        # Record in MongoDB
+        votes.insert_one({
+            "voter_id": voter_id,
+            "candidate_id": candidate_id,
+            "tx_hash": res["tx_hash"],
+            "voter_address": res["voter_address"],
+            "timestamp": datetime.datetime.utcnow()
+        })
+
+        return jsonify({
+            "success": True, 
+            "message": "Vote cast successfully", 
+            "tx_hash": res["tx_hash"],
+            "block_number": res["block_number"]
+        }), 201
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/api/blockchain/results", methods=["GET"])
+def get_blockchain_results():
+    config = blockchain_config.find_one({"key": "active_contract"})
+    if not config:
+        return jsonify({"success": False, "message": "No results yet"}), 404
+        
+    try:
+        results = blockchain.get_results(config["address"])
+        
+        # Redact live results if voting is still open
+        if results.get("voting_open"):
+            results["total_votes"] = 0
+            results["overall_winner"] = None
+            if "all_candidates" in results:
+                for c in results["all_candidates"]:
+                    c["vote_count"] = 0
+                    c["percentage"] = 0
+            if "results_by_position" in results:
+                for pos_res in results["results_by_position"]:
+                    pos_res["winner"] = None
+                    for c in pos_res["candidates"]:
+                        c["vote_count"] = 0
+                        c["percentage"] = 0
+
+        # Augment with photos (even if redacted, we want full names and metadata)
+        for pos_res in results["results_by_position"]:
+            for c in pos_res["candidates"]:
+                app = candidate_applications.find_one({"full_name": c["name"], "status": "Approved"})
+                if app:
+                    c["candidate_photo_url"] = app.get("candidate_photo_url")
+                    c["branch_name"] = app.get("branch_name")
+
+        return jsonify({"success": True, **results}), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
 # Run App
 if __name__ == "__main__":
     PORT = int(os.getenv("PORT", 5000))
-    app.run(debug=True, port=PORT)
+    app.run(debug=True, port=PORT, use_reloader=False)

@@ -174,8 +174,17 @@ function VoterDashboard() {
           </div>
         </section>
 
-        {/* Action Tiles - 2x2 Grid */}
+        {/* Action Tiles */}
         <section className="vd-action-tiles">
+          <div className="vd-tile vd-tile--highlight">
+            <div className="vd-tile-icon">🗳️</div>
+            <h3 className="vd-tile-title">Cast Your Vote</h3>
+            <p className="vd-tile-desc">Securely cast your vote on the blockchain. Each voter gets exactly one vote.</p>
+            <button className="vd-tile-btn vd-tile-btn--primary" onClick={() => navigate("/vote")}>
+              Vote Now
+            </button>
+          </div>
+
           <div className="vd-tile">
             <div className="vd-tile-icon">📋</div>
             <h3 className="vd-tile-title">View Voters List</h3>
