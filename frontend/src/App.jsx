@@ -18,6 +18,7 @@ import AdminVoting from "./pages/AdminVoting";
 import Notifications from "./pages/Notifications";
 import AdminCandidateApplications from "./pages/AdminCandidateApplications";
 import AdminNominationPortal from "./pages/AdminNominationPortal";
+import VotingPage from "./pages/VotingPage";
 import "./App.css";
 
 class PageErrorBoundary extends Component {
@@ -57,7 +58,7 @@ function App() {
     // Check if user is already logged in
     const token = localStorage.getItem("token");
     const storedUserType = localStorage.getItem("userType");
-    
+
     if (token && storedUserType) {
       setIsLoggedIn(true);
       setUserType(storedUserType);
@@ -92,58 +93,58 @@ function App() {
         <Route path="/login" element={<Login onLoginSuccess={handleLoginSuccess} />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/admin-signup" element={<AdminSignup />} />
-        
+
         {/* Protected Admin Dashboard */}
-        <Route 
-          path="/admin-dashboard" 
+        <Route
+          path="/admin-dashboard"
           element={
             isLoggedIn && userType === "admin" ? (
               <AdminDashboard />
             ) : (
               <Navigate to="/login" />
             )
-          } 
+          }
         />
 
         {/* Protected Add Voter Page */}
-        <Route 
-          path="/add-voter" 
+        <Route
+          path="/add-voter"
           element={
             isLoggedIn && userType === "admin" ? (
               <AddVoter />
             ) : (
               <Navigate to="/login" />
             )
-          } 
+          }
         />
 
         {/* Protected Voter Dashboard */}
-        <Route 
-          path="/voter-dashboard" 
+        <Route
+          path="/voter-dashboard"
           element={
             isLoggedIn && userType === "voter" ? (
               <VoterDashboard />
             ) : (
               <Navigate to="/login" />
             )
-          } 
+          }
         />
 
         {/* Protected Report Voter Error Page */}
-        <Route 
-          path="/report-voter-error" 
+        <Route
+          path="/report-voter-error"
           element={
             isLoggedIn && userType === "voter" ? (
               <ReportVoterError />
             ) : (
               <Navigate to="/login" />
             )
-          } 
+          }
         />
 
         {/* Protected View Voters List Page (voter) */}
-        <Route 
-          path="/voters-list" 
+        <Route
+          path="/voters-list"
           element={
             isLoggedIn && userType === "voter" ? (
               <PageErrorBoundary>
@@ -152,7 +153,7 @@ function App() {
             ) : (
               <Navigate to="/login" />
             )
-          } 
+          }
         />
 
         {/* Protected View Voters List Page (admin) */}
@@ -170,15 +171,15 @@ function App() {
         />
 
         {/* Protected Candidate Application Page */}
-        <Route 
-          path="/candidate-application" 
+        <Route
+          path="/candidate-application"
           element={
             isLoggedIn && userType === "voter" ? (
               <CandidateApplication />
             ) : (
               <Navigate to="/login" />
             )
-          } 
+          }
         />
 
         <Route
@@ -203,16 +204,28 @@ function App() {
           }
         />
 
+        {/* Protected Voting Booth */}
+        <Route
+          path="/vote"
+          element={
+            isLoggedIn && userType === "voter" ? (
+              <VotingPage />
+            ) : (
+              <Navigate to="/login" />
+            )
+          }
+        />
+
         {/* Protected Election Results Page */}
-        <Route 
-          path="/election-results" 
+        <Route
+          path="/election-results"
           element={
             isLoggedIn && userType === "voter" ? (
               <ElectionResults />
             ) : (
               <Navigate to="/login" />
             )
-          } 
+          }
         />
 
         <Route
@@ -238,8 +251,8 @@ function App() {
         />
 
         {/* Redirect from /dashboard to appropriate dashboard */}
-        <Route 
-          path="/dashboard" 
+        <Route
+          path="/dashboard"
           element={
             isLoggedIn ? (
               userType === "admin" ? (
@@ -250,7 +263,7 @@ function App() {
             ) : (
               <Navigate to="/" />
             )
-          } 
+          }
         />
         {/* Admin Reports Page */}
         <Route
