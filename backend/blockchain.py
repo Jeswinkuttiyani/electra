@@ -190,9 +190,9 @@ def end_voting(contract_address: str) -> dict:
 
 
 # ─── Voter Operations ─────────────────────────────────────────────────────────
-def cast_vote(contract_address: str, candidate_id: int, voter_eth_address: str) -> dict:
+def cast_vote(contract_address: str, candidate_ids: list, voter_eth_address: str) -> dict:
     """
-    Cast a vote on the blockchain.
+    Cast a ballot containing multiple candidate IDs on the blockchain.
     voter_eth_address: the Ganache account assigned to this voter.
     Returns {"tx_hash": str, "block_number": int}
     """
@@ -200,12 +200,15 @@ def cast_vote(contract_address: str, candidate_id: int, voter_eth_address: str) 
     contract = _get_contract(contract_address)
     voter_addr = Web3.to_checksum_address(voter_eth_address)
 
-    tx_hash = contract.functions.castVote(candidate_id).transact(
-        {"from": voter_addr, "gas": 150_000}
+    # Ensure all IDs are integers
+    ids = [int(cid) for cid in candidate_ids]
+
+    tx_hash = contract.functions.castBallot(ids).transact(
+        {"from": voter_addr, "gas": 500_000} # Increased gas for loop
     )
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
     if receipt.status != 1:
-        raise RuntimeError("Transaction reverted — vote not counted")
+        raise RuntimeError("Transaction reverted — ballot not counted")
     return {
         "tx_hash": tx_hash.hex(),
         "block_number": receipt.blockNumber,
@@ -279,13 +282,22 @@ def get_results(contract_address: str) -> dict:
     max_votes = -1
 
     for pos, cands in positions.items():
-        winner = max(cands, key=lambda x: x["vote_count"])
+        # Only assign a winner if the max vote count is > 0
+        sorted_cands = sorted(cands, key=lambda x: x["vote_count"], reverse=True)
+        max_v = sorted_cands[0]["vote_count"]
+        
+        # Check for tie
+        top_tier = [c for c in sorted_cands if c["vote_count"] == max_v and max_v > 0]
+        is_tie = len(top_tier) > 1
+        winner = top_tier[0] if len(top_tier) == 1 else None
+        
         results_by_position.append({
             "position": pos,
-            "candidates": sorted(cands, key=lambda x: x["vote_count"], reverse=True),
+            "candidates": sorted_cands,
             "winner": winner if not voting_open else None,
+            "is_tie": is_tie if not voting_open else False
         })
-        if winner["vote_count"] > max_votes:
+        if winner and winner["vote_count"] > max_votes:
             max_votes = winner["vote_count"]
             overall_winner = winner
 

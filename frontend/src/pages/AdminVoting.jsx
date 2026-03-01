@@ -195,35 +195,52 @@ export default function AdminVoting() {
               {/* ── Live Results ─────────────────────────────────────── */}
               {candidates.length > 0 && (
                 <div className="bc-card">
-                  <div className="bc-card-title">
-                    📊 Live Vote Counts
+                  <div className="bc-card-title" style={{ borderBottom: "1px solid #eee", paddingBottom: 12, marginBottom: 16 }}>
+                    📊 Live Results by Position
                     <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 10, opacity: 0.6 }}>
                       auto-refreshes every 8s
                     </span>
                   </div>
-                  <div className="bc-results-table">
-                    <div className="bc-table-header">
-                      <span>#</span>
-                      <span>Candidate</span>
-                      <span>Position</span>
-                      <span>Symbol</span>
-                      <span>Votes</span>
-                      <span style={{ minWidth: 140 }}>Share</span>
-                    </div>
-                    {candidates
-                      .slice()
-                      .sort((a, b) => b.vote_count - a.vote_count)
-                      .map((c, i) => (
-                        <div key={c.id} className={`bc-table-row ${i === 0 && totalVotes > 0 ? "bc-row--leading" : ""}`}>
-                          <span>{i === 0 && totalVotes > 0 ? "🏆" : i + 1}</span>
-                          <span><strong>{c.name}</strong>{c.branch_name ? <small style={{ display: "block", opacity: 0.6 }}>{c.branch_name}</small> : null}</span>
-                          <span>{c.position}</span>
-                          <span>{c.symbol}</span>
-                          <span><strong>{c.vote_count}</strong></span>
-                          <span><ProgressBar value={c.vote_count} max={Math.max(totalVotes, 1)} /></span>
+
+                  {[...new Set(candidates.map(c => c.position))].sort().map(posName => {
+                    const posCands = candidates.filter(c => c.position === posName).sort((a, b) => b.vote_count - a.vote_count);
+                    const maxV = posCands[0].vote_count;
+                    const tied = maxV > 0 && posCands.filter(c => c.vote_count === maxV).length > 1;
+
+                    return (
+                      <div key={posName} style={{ marginBottom: 32 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, alignItems: "center" }}>
+                          <h4 style={{ margin: 0, color: "#1e3c72", fontSize: 15 }}>{posName}</h4>
+                          {maxV > 0 && (
+                            tied
+                              ? <span style={{ fontSize: 11, color: "#6c757d", fontWeight: 700, padding: "2px 8px", background: "#f8f9fa", borderRadius: 12 }}>⚖️ Tied</span>
+                              : <span style={{ fontSize: 11, color: "#1e7e34", fontWeight: 700, padding: "2px 8px", background: "#e6f4ea", borderRadius: 12 }}>🏆 Lead: {posCands[0].name}</span>
+                          )}
                         </div>
-                      ))}
-                  </div>
+                        <div className="bc-results-table">
+                          <div className="bc-table-header">
+                            <span>#</span>
+                            <span>Candidate</span>
+                            <span>Symbol</span>
+                            <span>Votes</span>
+                            <span style={{ minWidth: 140 }}>Share</span>
+                          </div>
+                          {posCands.map((c, i) => {
+                            const isLeading = maxV > 0 && c.vote_count === maxV && !tied;
+                            return (
+                              <div key={c.id} className={`bc-table-row ${isLeading ? "bc-row--leading" : ""}`}>
+                                <span>{isLeading ? "🏆" : i + 1}</span>
+                                <span><strong>{c.name}</strong></span>
+                                <span>{c.symbol}</span>
+                                <span><strong>{c.vote_count}</strong></span>
+                                <span><ProgressBar value={c.vote_count} max={Math.max(totalVotes, 1)} /></span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 

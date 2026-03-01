@@ -15,7 +15,36 @@ function VoterDashboard() {
   const [branchName, setBranchName] = useState("");
   const [photoUrl, setPhotoUrl] = useState("");
   const [profilePhotoFailed, setProfilePhotoFailed] = useState(false);
+  const [walletAddress, setWalletAddress] = useState("");
   const [notifications, setNotifications] = useState([]);
+
+  const handleLinkWallet = async () => {
+    if (!window.ethereum) {
+      alert("Please install MetaMask to link your wallet!");
+      return;
+    }
+
+    try {
+      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      const address = accounts[0];
+
+      const token = localStorage.getItem("token");
+      const res = await api.post("/auth/metamask/link",
+        { address },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      if (res.data.success) {
+        setWalletAddress(address);
+        localStorage.setItem("walletAddress", address);
+        alert("Success! Your MetaMask wallet has been linked to your Electra account.");
+      } else {
+        alert(res.data.message || "Failed to link wallet");
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || err.message || "Link failed");
+    }
+  };
   const [dismissedNotificationIds, setDismissedNotificationIds] = useState(() => {
     try {
       const raw = localStorage.getItem("dismissedNotificationIds");
@@ -58,48 +87,51 @@ function VoterDashboard() {
   };
 
   useEffect(() => {
-    const storedEmail = localStorage.getItem("email");
-    const storedName = localStorage.getItem("name");
-    const storedFullName = localStorage.getItem("fullName");
-    const storedVoterId = localStorage.getItem("voterId");
-    const storedDob = localStorage.getItem("dob");
-    const storedPhoneNo = localStorage.getItem("phoneNo");
-    const storedAddress = localStorage.getItem("address");
-    const storedBranchName = localStorage.getItem("branchName");
-    const storedPhotoUrl = localStorage.getItem("photoUrl");
-    const userType = localStorage.getItem("userType");
+    const fetchProfile = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        const userType = localStorage.getItem("userType");
+        if (!token || userType !== "voter") {
+          navigate("/login");
+          return;
+        }
 
-    if (!storedEmail || userType !== "voter") {
-      navigate("/login");
-      return;
-    }
+        const res = await api.get("/auth/profile", {
+          headers: { Authorization: `Bearer ${token}` }
+        });
 
-    setEmail(storedEmail);
-    setName(storedName || "");
-    setFullName(storedFullName || "");
-    setVoterId(storedVoterId || "");
-    setDob(storedDob || "");
-    setPhoneNo(storedPhoneNo || "");
-    setAddress(storedAddress || "");
-    setBranchName(storedBranchName || "");
-    setPhotoUrl(storedPhotoUrl || "");
+        if (res.data.success) {
+          const p = res.data;
+          setEmail(p.email || "");
+          setName(p.name || "");
+          setFullName(p.full_name || "");
+          setVoterId(p.voter_id || "");
+          setDob(p.date_of_birth || p.dob || "");
+          setPhoneNo(p.phone_no || "");
+          setAddress(p.address || "");
+          setBranchName(p.branch_name || "");
+          setPhotoUrl(p.photo_url || "");
+          setWalletAddress(p.walletAddress || "");
 
-    // Fetch notifications from admin
+          // Update local storage to keep it in sync
+          localStorage.setItem("email", p.email || "");
+          localStorage.setItem("voterId", p.voter_id || "");
+          localStorage.setItem("walletAddress", p.walletAddress || "");
+        }
+      } catch (err) {
+        console.error("Failed to fetch profile:", err);
+        if (err.response?.status === 401) {
+          navigate("/login");
+        }
+      }
+    };
+
+    fetchProfile();
     fetchNotifications();
   }, [navigate]);
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("userType");
-    localStorage.removeItem("name");
-    localStorage.removeItem("fullName");
-    localStorage.removeItem("voterId");
-    localStorage.removeItem("email");
-    localStorage.removeItem("dob");
-    localStorage.removeItem("phoneNo");
-    localStorage.removeItem("address");
-    localStorage.removeItem("branchName");
-    localStorage.removeItem("photoUrl");
+    localStorage.clear(); // Clear EVERYTHING to prevent session leaks
     window.location.href = "/";
   };
 
@@ -169,6 +201,29 @@ function VoterDashboard() {
               <div className="profile-row">
                 <span className="profile-label">Branch Name:</span>
                 <span className="profile-value">{branchName || "—"}</span>
+              </div>
+              <div className="profile-row">
+                <span className="profile-label">Wallet ID:</span>
+                <span className="profile-value">
+                  {walletAddress ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span className="wallet-badge">
+                        ✅ {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+                      </span>
+                      <button
+                        className="vd-tile-btn"
+                        style={{ padding: "2px 8px", fontSize: 10, background: "none", border: "1px solid #ccc", color: "#666" }}
+                        onClick={handleLinkWallet}
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : (
+                    <button className="vd-tile-btn" style={{ padding: "4px 10px", fontSize: 12 }} onClick={handleLinkWallet}>
+                      Link MetaMask Wallet
+                    </button>
+                  )}
+                </span>
               </div>
             </div>
           </div>

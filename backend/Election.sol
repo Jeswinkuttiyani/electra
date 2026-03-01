@@ -74,16 +74,22 @@ contract Election {
         emit VotingEnded(block.timestamp);
     }
 
-    function castVote(uint _candidateId) public votingIsOpen {
+    function castBallot(uint[] memory _candidateIds) public votingIsOpen {
         require(!hasVoted[msg.sender], "You have already voted");
-        require(_candidateId > 0 && _candidateId <= candidateCount, "Invalid candidate");
-        require(candidates[_candidateId].exists, "Candidate does not exist");
+        require(_candidateIds.length > 0, "No candidates selected");
 
         hasVoted[msg.sender] = true;
-        candidates[_candidateId].voteCount++;
-        totalVotes++;
 
-        emit VoteCast(msg.sender, _candidateId, block.timestamp);
+        for (uint i = 0; i < _candidateIds.length; i++) {
+            uint cid = _candidateIds[i];
+            require(cid > 0 && cid <= candidateCount, "Invalid candidate ID");
+            require(candidates[cid].exists, "Candidate does not exist");
+            
+            candidates[cid].voteCount++;
+            emit VoteCast(msg.sender, cid, block.timestamp);
+        }
+        
+        totalVotes++; // Increment total voters count
     }
 
     function getCandidate(uint _id) public view returns (
