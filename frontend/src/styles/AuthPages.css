@@ -5,7 +5,9 @@
   box-sizing: border-box;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   height: 100%;
   margin: 0;
   padding: 0;
@@ -144,6 +146,7 @@ body {
     opacity: 0;
     transform: translateY(-30px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -165,12 +168,13 @@ body {
 }
 
 @keyframes fadeIn {
-  from { 
-    opacity: 0; 
+  from {
+    opacity: 0;
     transform: translateY(20px);
   }
-  to { 
-    opacity: 1; 
+
+  to {
+    opacity: 1;
     transform: translateY(0);
   }
 }
@@ -397,7 +401,8 @@ body {
 
   .form-group input {
     padding: 10px 12px;
-    font-size: 16px; /* Prevents zoom on iOS */
+    font-size: 16px;
+    /* Prevents zoom on iOS */
   }
 
   .user-type-switch {
@@ -414,4 +419,61 @@ body {
     align-items: flex-start;
     gap: 10px;
   }
+}
+
+/* MetaMask Styles */
+.metamask-login-btn {
+  width: 100%;
+  padding: 12px;
+  background: white;
+  border: 1.5px solid #d1d5db;
+  border-radius: 8px;
+  color: #1f2937;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition: all 0.2s ease;
+  margin-top: 12px;
+}
+
+.metamask-login-btn:hover:not(:disabled) {
+  background: #f9fafb;
+  border-color: #2a5298;
+}
+
+.metamask-login-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.metamask-login-btn img {
+  width: 22px;
+  height: 22px;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  margin: 20px 0;
+  gap: 12px;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #e5e7eb;
+}
+
+.auth-divider span {
+  color: #9ca3af;
+  font-size: 13px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }

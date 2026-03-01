@@ -12,6 +12,9 @@ import base64
 import json
 import uuid
 import blockchain
+import random
+import string
+from eth_account.messages import encode_defunct
 
 # Load environment variables
 load_dotenv()
@@ -23,7 +26,8 @@ JWT_EXPIRES_MINUTES = int(os.getenv("JWT_EXPIRES_MINUTES", 60))
 
 # Flask app
 app = Flask(__name__)
-CORS(app)
+# Enable CORS for all routes, allowing React dev server (5173) explicitly
+CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 
 UPLOAD_PHOTOS_DIR = os.path.join(os.path.dirname(__file__), "uploads", "photos")
 UPLOAD_CANDIDATE_DOCS_DIR = os.path.join(os.path.dirname(__file__), "uploads", "candidate_docs")
@@ -58,6 +62,7 @@ candidate_applications = db["candidate_applications"]
 election_config = db["election_config"]
 blockchain_config = db["blockchain_config"]
 votes = db["votes"] 
+metamask_nonces = db["metamask_nonces"] # Collection for MetaMask auth nonces
 
 try:
     candidate_applications.create_index([("voter_id", 1)], unique=True)
@@ -767,26 +772,182 @@ def login():
 
     # Include all voter-specific fields if they exist
     if user.get("user_type") == "voter":
-        if user.get("name"):
-            response_data["name"] = user.get("name")
-        if user.get("voter_id"):
-            response_data["voter_id"] = user.get("voter_id")
-        if user.get("full_name"):
-            response_data["full_name"] = user.get("full_name")
-        if user.get("email"):
-            response_data["email"] = user.get("email")
-        if user.get("phone_no"):
-            response_data["phone_no"] = user.get("phone_no")
-        if user.get("address"):
-            response_data["address"] = user.get("address")
-        if user.get("date_of_birth"):
-            response_data["date_of_birth"] = user.get("date_of_birth")
-        if user.get("branch_name"):
-            response_data["branch_name"] = user.get("branch_name")
-        if user.get("photo_url"):
-            response_data["photo_url"] = user.get("photo_url")
+        # Robust address stringification
+        address_val = user.get("address", "")
+        if isinstance(address_val, dict):
+            addr_str = ", ".join([str(v) for v in address_val.values() if v])
+        else:
+            addr_str = str(address_val)
+
+        response_data.update({
+            "name": user.get("name"),
+            "voter_id": user.get("voter_id"),
+            "full_name": user.get("full_name"),
+            "email": user.get("email"),
+            "phone_no": user.get("phone_no"),
+            "address": addr_str,
+            "date_of_birth": user.get("date_of_birth"),
+            "branch_name": user.get("branch_name"),
+            "photo_url": user.get("photo_url"),
+            "walletAddress": user.get("wallet_address")
+        })
 
     return jsonify(response_data), 200
+
+
+@app.route("/api/auth/profile", methods=["GET"])
+def get_profile():
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response: return error_response, status_code
+
+    response_data = {
+        "success": True,
+        "user_type": user.get("user_type"),
+        "user_id": str(user["_id"]),
+        "email": user.get("email"),
+        "name": user.get("name"),
+        "full_name": user.get("full_name"),
+        "voter_id": user.get("voter_id"),
+        "phone_no": user.get("phone_no"),
+        "date_of_birth": user.get("date_of_birth"),
+        "branch_name": user.get("branch_name"),
+        "photo_url": user.get("photo_url"),
+        "walletAddress": user.get("wallet_address")
+    }
+
+    # Robust address stringification
+    address = user.get("address", "")
+    if isinstance(address, dict):
+        response_data["address"] = ", ".join([str(v) for v in address.values() if v])
+    else:
+        response_data["address"] = str(address)
+
+    return jsonify(response_data), 200
+
+
+@app.route("/api/auth/metamask/nonce", methods=["POST"])
+def get_metamask_nonce():
+    data = request.json
+    address = data.get("address")
+    if not address:
+        return jsonify({"success": False, "message": "Address is required"}), 400
+    
+    # Check if user exists with this wallet address or allow linking
+    # For now, we'll just generate a nonce for the address
+    nonce = ''.join(random.choices(string.ascii_letters + string.digits, k=32))
+    
+    # Store or update nonce for this address
+    metamask_nonces.update_one(
+        {"address": address.lower()},
+        {"$set": {"nonce": nonce, "created_at": datetime.datetime.utcnow()}},
+        upsert=True
+    )
+    
+    return jsonify({"success": True, "nonce": nonce}), 200
+
+
+@app.route("/api/auth/metamask/verify", methods=["POST"])
+def verify_metamask_signature():
+    data = request.json
+    address = data.get("address")
+    signature = data.get("signature")
+    
+    if not address or not signature:
+        return jsonify({"success": False, "message": "Address and signature are required"}), 400
+    
+    address = address.lower()
+    
+    # Retrieve nonce
+    record = metamask_nonces.find_one({"address": address})
+    if not record:
+        return jsonify({"success": False, "message": "Nonce not found for this address"}), 404
+    
+    nonce = record["nonce"]
+    
+    # Verification message matches what frontend will sign
+    message_text = f"Sign this message to authenticate with Electra: {nonce}"
+    msghash = encode_defunct(text=message_text)
+    
+    try:
+        from web3 import Web3
+        w3 = Web3()
+        recovered_address = w3.eth.account.recover_message(msghash, signature=signature)
+        
+        if recovered_address.lower() == address:
+            # Signature is valid!
+            # Find user by wallet address
+            user = users.find_one({"wallet_address": address})
+            
+            if not user:
+                # If user doesn't exist, we might want to register them or return an error
+                # For this implementation, let's assume the user must be pre-registered and have a wallet linked
+                return jsonify({
+                    "success": False, 
+                    "message": "Wallet not linked to any account. Please login with email first and link your wallet."
+                }), 404
+            
+            # Create token
+            token = generate_token(user["_id"])
+            
+            # Clean up nonce
+            metamask_nonces.delete_one({"address": address})
+            
+            # Robust address stringification
+            address_val = user.get("address", "")
+            if isinstance(address_val, dict):
+                addr_str = ", ".join([str(v) for v in address_val.values() if v])
+            else:
+                addr_str = str(address_val)
+
+            return jsonify({
+                "success": True,
+                "message": "Login successful",
+                "token": token,
+                "user_type": user.get("user_type"),
+                "user_id": str(user["_id"]),
+                "name": user.get("name"),
+                "full_name": user.get("full_name"),
+                "email": user.get("email"),
+                "voter_id": user.get("voter_id"),
+                "dob": user.get("date_of_birth"),
+                "phone_no": user.get("phone_no"),
+                "address": addr_str,
+                "branch_name": user.get("branch_name"),
+                "photo_url": user.get("photo_url"),
+                "walletAddress": user.get("wallet_address")
+            }), 200
+        else:
+            return jsonify({"success": False, "message": "Invalid signature"}), 401
+            
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Verification failed: {str(e)}"}), 500
+
+
+@app.route("/api/auth/metamask/link", methods=["POST"])
+def link_wallet():
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response:
+        return error_response, status_code
+    
+    data = request.json
+    address = data.get("address")
+    if not address:
+        return jsonify({"success": False, "message": "Address is required"}), 400
+    
+    address = address.lower()
+    
+    # Check if this wallet is already linked to another account
+    existing = users.find_one({"wallet_address": address})
+    if existing and str(existing["_id"]) != str(user["_id"]):
+        return jsonify({"success": False, "message": "This wallet is already linked to another account"}), 409
+    
+    # Update user record
+    users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"wallet_address": address, "updated_at": datetime.datetime.utcnow()}}
+    )
+    
+    return jsonify({"success": True, "message": "Wallet linked successfully"}), 200
 
 
 @app.route("/")
@@ -1801,10 +1962,16 @@ def cast_blockchain_vote():
 
     voter_id = user.get("voter_id")
     data = request.json or {}
-    candidate_id = data.get("candidate_id")
+    candidate_ids = data.get("candidate_ids") # Array of IDs
+    signature = data.get("signature")
+    address = data.get("address")
+    message_text = data.get("message")
 
-    if candidate_id is None:
-        return jsonify({"success": False, "message": "candidate_id required"}), 400
+    if not candidate_ids or not isinstance(candidate_ids, list):
+        return jsonify({"success": False, "message": "candidate_ids array required"}), 400
+    
+    if not signature or not address or not message_text:
+        return jsonify({"success": False, "message": "MetaMask signature is required to vote"}), 400
 
     config = blockchain_config.find_one({"key": "active_contract"})
     if not config:
@@ -1814,18 +1981,38 @@ def cast_blockchain_vote():
     if votes.find_one({"voter_id": voter_id}):
         return jsonify({"success": False, "message": "You have already cast your vote"}), 400
 
+    # Verification: Ensure signature matches the address and user's linked wallet
     try:
-        # Determine eth address for this voter (simulated)
-        # We'll use a simple deterministic mapping from their MongoDB Oid or VoterID
-        voter_idx = int(voter_id.replace("SJC", "")) % 9 if "SJC" in voter_id else 1
-        voter_eth_addr = blockchain._voter_address(voter_idx)
+        from web3 import Web3
+        w3 = Web3()
+        msghash = encode_defunct(text=message_text)
+        recovered_address = w3.eth.account.recover_message(msghash, signature=signature)
+        
+        if recovered_address.lower() != address.lower():
+            return jsonify({"success": False, "message": "Invalid signature"}), 401
+            
+        linked_wallet = user.get("wallet_address")
+        if not linked_wallet or address.lower() != linked_wallet.lower():
+            return jsonify({"success": False, "message": "Please use your linked wallet to vote"}), 401
+            
+        # Security: Verify message contains the candidate_ids to prevent tampering
+        # Standardized Format: "Ballot: [1,2,3]" (no spaces, sorted)
+        sorted_ids = sorted([int(cid) for cid in candidate_ids])
+        ballot_str = f"Ballot: [{','.join(map(str, sorted_ids))}]"
+        
+        # Security: Verify message text contains our formatted ballot string
+        if ballot_str not in message_text:
+            return jsonify({
+                "success": False, 
+                "message": f"Signature message mismatch. Backend expected '{ballot_str}' inside your message, but got something else. Please restart your backend!"
+            }), 400
 
-        res = blockchain.cast_vote(config["address"], int(candidate_id), voter_eth_addr)
+        res = blockchain.cast_vote(config["address"], candidate_ids, linked_wallet)
         
         # Record in MongoDB
         votes.insert_one({
             "voter_id": voter_id,
-            "candidate_id": candidate_id,
+            "candidate_ids": candidate_ids, # Store the list
             "tx_hash": res["tx_hash"],
             "voter_address": res["voter_address"],
             "timestamp": datetime.datetime.utcnow()
@@ -1833,7 +2020,7 @@ def cast_blockchain_vote():
 
         return jsonify({
             "success": True, 
-            "message": "Vote cast successfully", 
+            "message": "Ballot cast successfully", 
             "tx_hash": res["tx_hash"],
             "block_number": res["block_number"]
         }), 201
@@ -1881,4 +2068,5 @@ def get_blockchain_results():
 # Run App
 if __name__ == "__main__":
     PORT = int(os.getenv("PORT", 5000))
-    app.run(debug=True, port=PORT, use_reloader=False)
+    print("--- Electra Backend Starting on port", PORT, "---")
+    app.run(debug=True, host="0.0.0.0", port=PORT, use_reloader=False)

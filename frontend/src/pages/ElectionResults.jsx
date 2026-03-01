@@ -122,20 +122,6 @@ export default function ElectionResults() {
                 </div>
               </div>
 
-              {/* ── Overall Winner Banner ──────────────────────────── */}
-              {!votingOpen && data.overall_winner && totalVotes > 0 && (
-                <div className="results-winner-banner">
-                  <div className="results-winner-trophy">🏆</div>
-                  <div>
-                    <div className="results-winner-label">Election Winner</div>
-                    <div className="results-winner-name">{data.overall_winner.name}</div>
-                    <div className="results-winner-sub">
-                      {data.overall_winner.position} · {data.overall_winner.vote_count} votes ({data.overall_winner.percentage}%)
-                    </div>
-                  </div>
-                </div>
-              )}
-
               {/* ── Results by Position ────────────────────────────── */}
               {votingOpen ? (
                 <div className="vote-closed-card" style={{ marginTop: 40, background: "rgba(30, 60, 114, 0.05)", border: "1px dashed #1e3c72" }}>
@@ -146,18 +132,34 @@ export default function ElectionResults() {
               ) : (
                 positions.map((pos) => (
                   <div key={pos.position} className="bc-card" style={{ marginTop: 20 }}>
-                    <div className="bc-card-title">
-                      {pos.position}
-                      {!votingOpen && pos.winner && (
-                        <span style={{ marginLeft: 12, fontSize: 13, fontWeight: 500, color: "#1e7e34" }}>
-                          🏆 Winner: {pos.winner.name}
-                        </span>
-                      )}
+                    <div className="bc-card-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span>{pos.position}</span>
+                      {!votingOpen && totalVotes > 0 && (() => {
+                        const topCands = (pos.candidates || []);
+                        const isTie = pos.is_tie || (topCands.length > 1 && topCands[0].vote_count === topCands[1].vote_count && topCands[0].vote_count > 0);
+
+                        if (isTie) {
+                          return (
+                            <span style={{ fontSize: 13, fontWeight: 700, color: "#6c757d", background: "#f8f9fa", padding: "4px 12px", borderRadius: 20, border: "1px solid #dee2e6" }}>
+                              ⚖️ Election Tied
+                            </span>
+                          );
+                        } else if (pos.winner) {
+                          return (
+                            <span style={{ fontSize: 13, fontWeight: 700, color: "#1e7e34", background: "#e6f4ea", padding: "4px 12px", borderRadius: 20, border: "1px solid #c3e6cb" }}>
+                              🏆 Winner: {pos.winner.name}
+                            </span>
+                          );
+                        }
+                        return null;
+                      })()}
                     </div>
 
                     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                       {(pos.candidates || []).map((c, idx) => {
-                        const isWinner = !votingOpen && pos.winner && c.id === pos.winner.id;
+                        const topCands = (pos.candidates || []);
+                        const isTie = pos.is_tie || (topCands.length > 1 && topCands[0].vote_count === topCands[1].vote_count && topCands[0].vote_count > 0);
+                        const isWinner = !votingOpen && !isTie && pos.winner && c.id === pos.winner.id;
                         const photoSrc = c.candidate_photo_url
                           ? `${backendOrigin}${c.candidate_photo_url}`
                           : null;
@@ -170,7 +172,7 @@ export default function ElectionResults() {
                             <div className="results-cand-avatar">
                               {photoSrc
                                 ? <img src={photoSrc} alt={c.name} onError={e => { e.target.style.display = "none"; }} />
-                                : <span>{idx === 0 && !votingOpen ? "🏆" : "👤"}</span>}
+                                : <span>{isWinner ? "🏆" : "👤"}</span>}
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
