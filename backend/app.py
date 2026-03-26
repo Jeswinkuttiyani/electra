@@ -15,6 +15,7 @@ import blockchain
 import random
 import string
 from eth_account.messages import encode_defunct
+from crypto_utils import encrypt_private_key, decrypt_private_key
 
 # Load environment variables
 load_dotenv()
@@ -812,7 +813,8 @@ def get_profile():
         "date_of_birth": user.get("date_of_birth"),
         "branch_name": user.get("branch_name"),
         "photo_url": user.get("photo_url"),
-        "walletAddress": user.get("wallet_address")
+        "walletAddress": user.get("wallet_address"),
+        "pin_setup": user.get("pin_setup", False)
     }
 
     # Robust address stringification
@@ -1353,6 +1355,105 @@ def verify_otp():
         "success": True,
         "message": "OTP verified successfully"
     }), 200
+
+
+@app.route("/api/voting-pin/setup", methods=["POST"])
+def setup_voting_pin():
+    """Initial setup of the 6-digit Voting PIN and Ethereum Wallet."""
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response:
+        return error_response, status_code
+
+    if not user:
+        return jsonify({"success": False, "message": "User not found"}), 404
+
+    data = request.json or {}
+    pin = data.get("pin")
+
+    if not pin or len(pin) != 6 or not pin.isdigit():
+        return jsonify({"success": False, "message": "PIN must be exactly 6 digits"}), 400
+
+    # If wallet already exists, we might be re-encrypting or just preventing duplicate setup
+    # For now, let's assume one-time setup
+    if user.get("encrypted_private_key"):
+         return jsonify({"success": False, "message": "Voting PIN already setup"}), 400
+
+    try:
+        # 1. Generate new Wallet
+        wallet = blockchain.create_wallet()
+        
+        # 2. Encrypt Private Key with PIN
+        encrypted_key = encrypt_private_key(wallet["private_key"], pin)
+        
+        # 3. Fund the wallet from Admin (one-time)
+        try:
+            blockchain.fund_voter(wallet["address"])
+        except Exception as e:
+            print(f"Warning: Auto-funding failed: {e}")
+            # We continue anyway, admin can manually fund if needed, but usually this is fine
+        
+        # 4. Save to User record
+        users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {
+                "wallet_address": wallet["address"],
+                "encrypted_private_key": encrypted_key,
+                "pin_setup": True,
+                "updated_at": datetime.datetime.utcnow()
+            }}
+        )
+
+        return jsonify({
+            "success": True, 
+            "message": "Voting PIN setup successful and Wallet generated",
+            "wallet_address": wallet["address"]
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Setup failed: {str(e)}"}), 500
+
+
+@app.route("/api/voting-pin/reset", methods=["POST"])
+def reset_voting_pin():
+    """Reset the 6-digit Voting PIN by verifying current PIN and re-encrypting the key."""
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response:
+        return error_response, status_code
+
+    data = request.json or {}
+    current_pin = data.get("current_pin")
+    new_pin = data.get("new_pin")
+
+    if not current_pin or not new_pin or len(new_pin) != 6 or not new_pin.isdigit():
+        return jsonify({"success": False, "message": "Valid current PIN and a 6-digit new PIN are required"}), 400
+
+    encrypted_key = user.get("encrypted_private_key")
+    if not encrypted_key:
+        return jsonify({"success": False, "message": "Voting PIN not setup yet"}), 400
+
+    try:
+        # 1. Decrypt Private Key with Current PIN to verify it
+        private_key = decrypt_private_key(encrypted_key, current_pin)
+        
+        # 2. Re-encrypt with New PIN
+        new_encrypted_key = encrypt_private_key(private_key, new_pin)
+        
+        # 3. Update User record
+        users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {
+                "encrypted_private_key": new_encrypted_key,
+                "updated_at": datetime.datetime.utcnow()
+            }}
+        )
+
+        return jsonify({
+            "success": True, 
+            "message": "Voting PIN has been reset successfully"
+        }), 200
+    except ValueError as e:
+        return jsonify({"success": False, "message": f"Incorrect current PIN: {str(e)}"}), 401
+    except Exception as e:
+        return jsonify({"success": False, "message": f"An error occurred: {str(e)}"}), 500
 
 
 @app.route("/api/capture-fingerprint", methods=["POST"])
@@ -1937,19 +2038,27 @@ def get_voter_blockchain_status():
     if not voter_id:
         return jsonify({"success": False, "message": "Not a registered voter"}), 400
 
+    # User-specific data that exists regardless of election status
+    res_data = {
+        "success": True, 
+        "voter_id": voter_id,
+        "email": user.get("email"),
+        "pin_setup": user.get("pin_setup", False) or "encrypted_private_key" in user,
+        "wallet_address": user.get("wallet_address")
+    }
+
+    # Election-specific data
     config = blockchain_config.find_one({"key": "active_contract"})
     if not config:
-        return jsonify({"success": True, "has_voted": False}), 200
-
-    # Derive Ganache address from DB index or just use the blockchain.py helper
-    # For simulation, we'll try to find if they've voted in our Mongo 'votes' collection first
-    vote_record = votes.find_one({"voter_id": voter_id})
+        res_data["has_voted"] = False
+        res_data["tx_hash"] = None
+    else:
+        # For simulation, we'll try to find if they've voted in our Mongo 'votes' collection
+        vote_record = votes.find_one({"voter_id": voter_id})
+        res_data["has_voted"] = bool(vote_record)
+        res_data["tx_hash"] = vote_record.get("tx_hash") if vote_record else None
     
-    return jsonify({
-        "success": True, 
-        "has_voted": bool(vote_record),
-        "tx_hash": vote_record.get("tx_hash") if vote_record else None
-    }), 200
+    return jsonify(res_data), 200
 
 
 @app.route("/api/blockchain/cast-vote", methods=["POST"])
@@ -1962,61 +2071,70 @@ def cast_blockchain_vote():
 
     voter_id = user.get("voter_id")
     data = request.json or {}
-    candidate_ids = data.get("candidate_ids") # Array of IDs
-    signature = data.get("signature")
-    address = data.get("address")
-    message_text = data.get("message")
+    candidate_ids = data.get("candidate_ids") 
+    pin = data.get("pin")
+    otp = data.get("otp")
 
     if not candidate_ids or not isinstance(candidate_ids, list):
         return jsonify({"success": False, "message": "candidate_ids array required"}), 400
     
-    if not signature or not address or not message_text:
-        return jsonify({"success": False, "message": "MetaMask signature is required to vote"}), 400
+    if not pin or not otp:
+        return jsonify({"success": False, "message": "Voting PIN and OTP are required"}), 400
 
     config = blockchain_config.find_one({"key": "active_contract"})
     if not config:
         return jsonify({"success": False, "message": "Election not initialized"}), 400
 
-    # Prevent double voting in MongoDB
+    # 1. Verify OTP
+    otp_record = otp_storage.find_one({
+        "voter_id": voter_id,
+        "otp": otp
+    })
+    if not otp_record or datetime.datetime.utcnow() > otp_record["expires_at"]:
+        return jsonify({"success": False, "message": "Invalid or expired OTP"}), 400
+
+    # 2. Prevent double voting in MongoDB
     if votes.find_one({"voter_id": voter_id}):
         return jsonify({"success": False, "message": "You have already cast your vote"}), 400
 
-    # Verification: Ensure signature matches the address and user's linked wallet
+    # 3. Decrypt Private Key
+    encrypted_key = user.get("encrypted_private_key")
+    if not encrypted_key:
+        return jsonify({"success": False, "message": "Voting PIN not setup. Please setup PIN first."}), 400
+    
     try:
-        from web3 import Web3
-        w3 = Web3()
-        msghash = encode_defunct(text=message_text)
-        recovered_address = w3.eth.account.recover_message(msghash, signature=signature)
-        
-        if recovered_address.lower() != address.lower():
-            return jsonify({"success": False, "message": "Invalid signature"}), 401
-            
-        linked_wallet = user.get("wallet_address")
-        if not linked_wallet or address.lower() != linked_wallet.lower():
-            return jsonify({"success": False, "message": "Please use your linked wallet to vote"}), 401
-            
-        # Security: Verify message contains the candidate_ids to prevent tampering
-        # Standardized Format: "Ballot: [1,2,3]" (no spaces, sorted)
-        sorted_ids = sorted([int(cid) for cid in candidate_ids])
-        ballot_str = f"Ballot: [{','.join(map(str, sorted_ids))}]"
-        
-        # Security: Verify message text contains our formatted ballot string
-        if ballot_str not in message_text:
-            return jsonify({
-                "success": False, 
-                "message": f"Signature message mismatch. Backend expected '{ballot_str}' inside your message, but got something else. Please restart your backend!"
-            }), 400
+        private_key = decrypt_private_key(encrypted_key, pin)
+    except ValueError as e:
+        return jsonify({"success": False, "message": str(e)}), 401
 
-        res = blockchain.cast_vote(config["address"], candidate_ids, linked_wallet)
+    try:
+        # 4. Ensure wallet has funds (Handles Ganache restarts)
+        w3 = blockchain.get_web3()
+        wallet_address = w3.eth.account.from_key(private_key).address
+        balance = w3.eth.get_balance(wallet_address)
         
-        # Record in MongoDB
+        # If balance < 0.05 ETH, fund it
+        if balance < w3.to_wei(0.05, 'ether'):
+            try:
+                blockchain.fund_voter(wallet_address)
+            except Exception as fe:
+                print(f"Warning: Auto-funding failed: {fe}")
+                # We try to proceed anyway, maybe it has just enough?
+        
+        # 5. Cast the vote on the blockchain using the decrypted private key
+        res = blockchain.cast_vote(config["address"], candidate_ids, private_key)
+        
+        # 6. Record in MongoDB
         votes.insert_one({
             "voter_id": voter_id,
-            "candidate_ids": candidate_ids, # Store the list
+            "candidate_ids": candidate_ids,
             "tx_hash": res["tx_hash"],
             "voter_address": res["voter_address"],
             "timestamp": datetime.datetime.utcnow()
         })
+
+        # 7. Clean up OTP
+        otp_storage.delete_many({"voter_id": voter_id})
 
         return jsonify({
             "success": True, 
@@ -2069,4 +2187,4 @@ def get_blockchain_results():
 if __name__ == "__main__":
     PORT = int(os.getenv("PORT", 5000))
     print("--- Electra Backend Starting on port", PORT, "---")
-    app.run(debug=True, host="0.0.0.0", port=PORT, use_reloader=False)
+    app.run(debug=True, host="0.0.0.0", port=PORT, use_reloader=True)
