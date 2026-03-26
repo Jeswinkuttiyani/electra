@@ -17,34 +17,17 @@ function VoterDashboard() {
   const [profilePhotoFailed, setProfilePhotoFailed] = useState(false);
   const [walletAddress, setWalletAddress] = useState("");
   const [notifications, setNotifications] = useState([]);
+  
+  // PIN Reset State
+  const [showResetPinModal, setShowResetPinModal] = useState(false);
+  const [currentPin, setCurrentPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmNewPin, setConfirmNewPin] = useState("");
+  const [resetError, setResetError] = useState("");
+  const [resetSuccess, setResetSuccess] = useState("");
+  const [isResetting, setIsResetting] = useState(false);
 
-  const handleLinkWallet = async () => {
-    if (!window.ethereum) {
-      alert("Please install MetaMask to link your wallet!");
-      return;
-    }
-
-    try {
-      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
-      const address = accounts[0];
-
-      const token = localStorage.getItem("token");
-      const res = await api.post("/auth/metamask/link",
-        { address },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      if (res.data.success) {
-        setWalletAddress(address);
-        localStorage.setItem("walletAddress", address);
-        alert("Success! Your MetaMask wallet has been linked to your Electra account.");
-      } else {
-        alert(res.data.message || "Failed to link wallet");
-      }
-    } catch (err) {
-      alert(err.response?.data?.message || err.message || "Link failed");
-    }
-  };
+  // Wallet linking is now managed by the backend.
   const [dismissedNotificationIds, setDismissedNotificationIds] = useState(() => {
     try {
       const raw = localStorage.getItem("dismissedNotificationIds");
@@ -135,6 +118,52 @@ function VoterDashboard() {
     window.location.href = "/";
   };
 
+  const handleResetPin = async (e) => {
+    e.preventDefault();
+    setResetError("");
+    setResetSuccess("");
+    
+    if (currentPin.length !== 6 || newPin.length !== 6 || confirmNewPin.length !== 6) {
+      setResetError("All PIN fields must be exactly 6 digits.");
+      return;
+    }
+    
+    if (newPin !== confirmNewPin) {
+      setResetError("New PIN and Confirm PIN do not match.");
+      return;
+    }
+    
+    setIsResetting(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await api.post("/voting-pin/reset", {
+        current_pin: currentPin,
+        new_pin: newPin
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      if (res.data.success) {
+        setResetSuccess("Your voting PIN has been successfully reset.");
+        setCurrentPin("");
+        setNewPin("");
+        setConfirmNewPin("");
+        
+        // Auto close after 3 seconds
+        setTimeout(() => {
+          setShowResetPinModal(false);
+          setResetSuccess("");
+        }, 3000);
+      } else {
+        setResetError(res.data.message || "Failed to reset PIN.");
+      }
+    } catch (err) {
+      setResetError(err.response?.data?.message || "Error connecting to server. Please try again.");
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   return (
     <div className="vd-wrapper">
       {/* Website Name Header */}
@@ -203,25 +232,14 @@ function VoterDashboard() {
                 <span className="profile-value">{branchName || "—"}</span>
               </div>
               <div className="profile-row">
-                <span className="profile-label">Wallet ID:</span>
+                <span className="profile-label">Blockchain ID:</span>
                 <span className="profile-value">
                   {walletAddress ? (
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span className="wallet-badge">
-                        ✅ {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
-                      </span>
-                      <button
-                        className="vd-tile-btn"
-                        style={{ padding: "2px 8px", fontSize: 10, background: "none", border: "1px solid #ccc", color: "#666" }}
-                        onClick={handleLinkWallet}
-                      >
-                        Change
-                      </button>
-                    </div>
+                    <span className="wallet-badge">
+                      ✅ {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+                    </span>
                   ) : (
-                    <button className="vd-tile-btn" style={{ padding: "4px 10px", fontSize: 12 }} onClick={handleLinkWallet}>
-                      Link MetaMask Wallet
-                    </button>
+                    <span style={{ opacity: 0.6, fontSize: 13 }}>Assigned automatically upon voting</span>
                   )}
                 </span>
               </div>
@@ -284,7 +302,93 @@ function VoterDashboard() {
               View Results
             </button>
           </div>
+
+          <div className="vd-tile">
+            <div className="vd-tile-icon">🔑</div>
+            <h3 className="vd-tile-title">Reset Voting PIN</h3>
+            <p className="vd-tile-desc">Safely change your 6-digit voting PIN used to encrypt your blockchain digital signature.</p>
+            <button className="vd-tile-btn" onClick={() => {
+              setShowResetPinModal(true);
+              setResetError("");
+              setResetSuccess("");
+              setCurrentPin("");
+              setNewPin("");
+              setConfirmNewPin("");
+            }}>
+              Reset PIN
+            </button>
+          </div>
         </section>
+        {/* Reset PIN Modal */}
+        {showResetPinModal && (
+          <div className="pin-modal-overlay">
+            <div className="pin-modal-content">
+              <h3>Reset Voting PIN</h3>
+              <p className="pin-modal-desc">Please enter your current PIN and your new 6-digit PIN below.</p>
+              
+              {resetError && <div className="pin-error-msg">{resetError}</div>}
+              {resetSuccess && <div className="pin-success-msg">{resetSuccess}</div>}
+              
+              <form onSubmit={handleResetPin} className="pin-reset-form">
+                <div className="pin-input-group">
+                  <label>Current PIN</label>
+                  <input 
+                    type="password" 
+                    maxLength="6" 
+                    value={currentPin}
+                    onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ""))}
+                    placeholder="Enter current 6-digit PIN"
+                    disabled={isResetting || !!resetSuccess}
+                    required
+                  />
+                </div>
+                
+                <div className="pin-input-group">
+                  <label>New PIN</label>
+                  <input 
+                    type="password" 
+                    maxLength="6" 
+                    value={newPin}
+                    onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
+                    placeholder="Enter new 6-digit PIN"
+                    disabled={isResetting || !!resetSuccess}
+                    required
+                  />
+                </div>
+                
+                <div className="pin-input-group">
+                  <label>Confirm New PIN</label>
+                  <input 
+                    type="password" 
+                    maxLength="6" 
+                    value={confirmNewPin}
+                    onChange={(e) => setConfirmNewPin(e.target.value.replace(/\D/g, ""))}
+                    placeholder="Re-enter new 6-digit PIN"
+                    disabled={isResetting || !!resetSuccess}
+                    required
+                  />
+                </div>
+                
+                <div className="pin-modal-actions">
+                  {!resetSuccess ? (
+                    <>
+                      <button type="button" className="btn-cancel" onClick={() => setShowResetPinModal(false)} disabled={isResetting}>
+                        Cancel
+                      </button>
+                      <button type="submit" className="btn-submit" disabled={isResetting}>
+                        {isResetting ? "Resetting..." : "Reset PIN"}
+                      </button>
+                    </>
+                  ) : (
+                    <button type="button" className="btn-submit" onClick={() => setShowResetPinModal(false)}>
+                      Close
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </main>
 
       <footer className="vd-footer">

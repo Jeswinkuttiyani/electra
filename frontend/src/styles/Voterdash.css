@@ -1837,3 +1837,148 @@ html,
   border: 2px solid #bbf7d0;
   background: linear-gradient(160deg, #ffffff, #f0fdf4);
 }
+
+/* ── PIN Reset Modal ─────────────────────────────────────────── */
+.pin-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(11, 35, 64, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  animation: overlay-in 0.2s ease;
+}
+
+.pin-modal-content {
+  background: #ffffff;
+  border-radius: 20px;
+  padding: 32px;
+  max-width: 400px;
+  width: 90%;
+  box-shadow: 0 24px 64px rgba(11, 35, 64, 0.3);
+  animation: modal-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pin-modal-content h3 {
+  font-size: 20px;
+  font-weight: 800;
+  color: #0b2340;
+  margin-bottom: 8px;
+  margin-top: 0;
+}
+
+.pin-modal-desc {
+  color: #475569;
+  font-size: 14px;
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+
+.pin-reset-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pin-input-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 6px;
+  text-align: left;
+}
+
+.pin-input-group input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #d7e2f0;
+  background: #f8fafc;
+  color: #0b2340;
+  font-size: 20px;
+  letter-spacing: 4px;
+  text-align: center;
+  transition: all 0.2s;
+  box-sizing: border-box;
+}
+
+.pin-input-group input:focus {
+  outline: none;
+  border-color: #6a62cc;
+  box-shadow: 0 0 0 4px rgba(106, 98, 204, 0.15);
+  background: #ffffff;
+}
+
+.pin-error-msg {
+  background: #fee2e2;
+  color: #b91c1c;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  border: 1px solid #fca5a5;
+  text-align: center;
+}
+
+.pin-success-msg {
+  background: #d1fae5;
+  color: #065f46;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  border: 1px solid #6ee7b7;
+  text-align: center;
+}
+
+.pin-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.pin-modal-actions .btn-cancel,
+.pin-modal-actions .btn-submit {
+  padding: 12px 20px;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+}
+
+.pin-modal-actions .btn-cancel {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.pin-modal-actions .btn-cancel:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+.pin-modal-actions .btn-submit {
+  background: linear-gradient(135deg, #2a5298, #1e3c72);
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(30, 60, 114, 0.25);
+  flex: 1;
+}
+
+.pin-modal-actions .btn-submit:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(30, 60, 114, 0.35);
+}
+
+.pin-modal-actions .btn-submit:disabled,
+.pin-modal-actions .btn-cancel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}

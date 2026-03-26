@@ -54,7 +54,14 @@ export default function VotingPage() {
     const [busy, setBusy] = useState(false);
     const [success, setSuccess] = useState(null); // { tx_hash, candidate_names }
     const [error, setError] = useState("");
-    const [walletAddress, setWalletAddress] = useState(localStorage.getItem("walletAddress") || "");
+    const [pin, setPin] = useState("");
+    const [confirmPin, setConfirmPin] = useState("");
+    const [currentPin, setCurrentPin] = useState("");
+    const [otp, setOtp] = useState("");
+    const [showOtpField, setShowOtpField] = useState(false);
+    const [otpLoading, setOtpLoading] = useState(false);
+    const [pinSetupMode, setPinSetupMode] = useState(false);
+    const [resetMode, setResetMode] = useState(false);
 
     const fetchData = useCallback(async () => {
         try {
@@ -65,7 +72,10 @@ export default function VotingPage() {
             ]);
             if (sRes.data.success) setStatus(sRes.data);
             if (cRes.data.success) setCandidates(cRes.data.candidates || []);
-            if (vRes.data.success) setVoterStatus(vRes.data);
+            if (vRes.data.success) {
+                setVoterStatus(vRes.data);
+                setPinSetupMode(!vRes.data.pin_setup);
+            }
         } catch {
             setError("Failed to load voting information. Please try again.");
         } finally {
@@ -75,55 +85,89 @@ export default function VotingPage() {
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
+    const handleSetupPin = async () => {
+        if (pin.length !== 6 || !/^\d+$/.test(pin)) {
+            setError("PIN must be exactly 6 digits.");
+            return;
+        }
+        if (pin !== confirmPin) {
+            setError("PINs do not match.");
+            return;
+        }
+        setBusy(true);
+        setError("");
+        try {
+            const res = await API("/voting-pin/setup", {
+                method: "post",
+                data: { pin }
+            });
+            if (res.data.success) {
+                setPin("");
+                setConfirmPin("");
+                setPinSetupMode(false);
+                fetchData();
+            } else {
+                setError(res.data.message);
+            }
+        } catch (e) {
+            setError(e.response?.data?.message || "Failed to setup PIN");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleSendOtp = async () => {
+        if (pin.length !== 6) {
+            setError("Please enter your 6-digit PIN first.");
+            return;
+        }
+        setOtpLoading(true);
+        setError("");
+        try {
+            const res = await API("/send-otp", {
+                method: "post",
+                data: { 
+                    voter_id: voterStatus?.voter_id || localStorage.getItem("voterId"),
+                    email: voterStatus?.email || localStorage.getItem("email") 
+                }
+            });
+            if (res.data.success) {
+                setShowOtpField(true);
+            } else {
+                setError(res.data.message);
+            }
+        } catch (e) {
+            setError(e.response?.data?.message || "Failed to send OTP");
+        } finally {
+            setOtpLoading(false);
+        }
+    };
+
     const handleSelect = (pos, cid) => {
         setSelections(prev => ({ ...prev, [pos]: cid }));
     };
 
     const handleCastVote = async () => {
         const selectedIds = Object.values(selections);
-        if (selectedIds.length === 0) {
-            setError("Please select at least one candidate.");
-            return;
-        }
-
-        if (!window.ethereum) {
-            setError("MetaMask is required to cast a vote.");
+        if (!otp) {
+            setError("Please enter the OTP sent to your email.");
             return;
         }
 
         setBusy(true);
         setError("");
         try {
-            const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
-            const address = accounts[0];
-
-            if (walletAddress && address.toLowerCase() !== walletAddress.toLowerCase()) {
-                throw new Error(`Please switch to your linked wallet: ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`);
-            }
-
-            // Standardize format to avoid space/mismatch issues: [1,2,3]
-            const ballotIds = [...selectedIds].sort((a, b) => a - b);
-            const selectedCands = candidates.filter(c => selectedIds.includes(c.id));
-            const message = `Casting my vote for Ballot: [${ballotIds.join(",")}]`;
-            console.log("SIGNING MESSAGE:", message);
-            console.log("FOR ADDRESS:", address);
-
-            const signature = await window.ethereum.request({
-                method: "personal_sign",
-                params: [message, address],
-            });
-
             const res = await API("/blockchain/cast-vote", {
                 method: "post",
                 data: {
                     candidate_ids: selectedIds,
-                    signature: signature,
-                    address: address,
-                    message: message
+                    pin: pin,
+                    otp: otp
                 },
             });
 
             if (res.data.success) {
+                const selectedCands = candidates.filter(c => selectedIds.includes(c.id));
                 setSuccess({
                     tx_hash: res.data.tx_hash,
                     block_number: res.data.block_number,
@@ -132,15 +176,45 @@ export default function VotingPage() {
                 setConfirming(false);
             } else {
                 setError(res.data.message || "Failed to cast vote");
-                setConfirming(false);
             }
         } catch (e) {
             let msg = e.response?.data?.message || e.message || "Vote failed";
-            if (msg.includes("sender account not recognized")) {
-                msg = "Blockchain Session Expired: Your wallet is not recognized by the current chain. Please go back to the Dashboard and use the 'Change' button to re-link your wallet.";
-            }
             setError(msg);
-            setConfirming(false);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleResetPin = async () => {
+        if (currentPin.length !== 6 || pin.length !== 6 || confirmPin.length !== 6) {
+            setError("All PIN fields must be exactly 6 digits.");
+            return;
+        }
+        if (pin !== confirmPin) {
+            setError("New PINs do not match.");
+            return;
+        }
+        setBusy(true);
+        setError("");
+        try {
+            const res = await API("/voting-pin/reset", {
+                method: "post",
+                data: { 
+                    current_pin: currentPin,
+                    new_pin: pin
+                }
+            });
+            if (res.data.success) {
+                setPin("");
+                setConfirmPin("");
+                setCurrentPin("");
+                setResetMode(false);
+                alert("PIN reset successfully!");
+            } else {
+                setError(res.data.message || "Failed to reset PIN");
+            }
+        } catch (err) {
+            setError(err.response?.data?.message || "Error resetting PIN");
         } finally {
             setBusy(false);
         }
@@ -162,8 +236,72 @@ export default function VotingPage() {
         );
     }
 
-    // ── Wallet Link Enforcement Screen ─────────────────────────────────────────
-    if (!walletAddress) {
+
+    // ── PIN Setup Screen ──────────────────────────────────────────────────────
+    if (pinSetupMode) {
+        return (
+            <div className="vd-wrapper">
+                <header className="vd-header">
+                    <div className="vd-header-inner">
+                        <h1 className="vd-website-name">ELECTRA</h1>
+                        <button className="btn-logout" onClick={() => navigate("/voter-dashboard")}>← Dashboard</button>
+                    </div>
+                </header>
+                <main className="vd-main">
+                    <div className="vote-closed-card" style={{ maxWidth: 500, margin: "0 auto" }}>
+                        <div style={{ fontSize: 48 }}>🛡️</div>
+                        <h2 style={{ marginTop: 16 }}>Secure Your Vote</h2>
+                        <p style={{ opacity: 0.7, fontSize: 15, marginBottom: 24 }}>
+                            Before you can vote, you must set a 6-digit <strong>Voting PIN</strong>. 
+                            This PIN will be used to encrypt your blockchain digital signature.
+                        </p>
+                        
+                        {error && <div className="bc-flash bc-flash--error" style={{ marginBottom: 16 }}>{error}</div>}
+
+                        <div className="pin-input-group" style={{ marginBottom: 12 }}>
+                            <label style={{ display: "block", marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>Create 6-Digit PIN</label>
+                            <input 
+                                type="password" 
+                                maxLength="6"
+                                placeholder="● ● ● ● ● ●"
+                                value={pin}
+                                onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+                                style={{ width: "100%", padding: "12px", border: "2px solid #ddd", borderRadius: 8, textAlign: "center", fontSize: 24, letterSpacing: 8 }}
+                            />
+                        </div>
+
+                        <div className="pin-input-group" style={{ marginBottom: 24 }}>
+                            <label style={{ display: "block", marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>Confirm PIN</label>
+                            <input 
+                                type="password" 
+                                maxLength="6"
+                                placeholder="● ● ● ● ● ●"
+                                value={confirmPin}
+                                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ""))}
+                                style={{ width: "100%", padding: "12px", border: "2px solid #ddd", borderRadius: 8, textAlign: "center", fontSize: 24, letterSpacing: 8 }}
+                            />
+                        </div>
+
+                        <button 
+                            className="bc-btn bc-btn--start" 
+                            style={{ width: "100%" }} 
+                            onClick={handleSetupPin}
+                            disabled={busy || pin.length !== 6 || confirmPin.length !== 6}
+                        >
+                            {busy ? "Initializing Wallet..." : "Set Voting PIN →"}
+                        </button>
+
+                        <p style={{ fontSize: 12, opacity: 0.5, marginTop: 16 }}>
+                            ⚠️ Do not share this PIN. It will be required every time you cast a vote.
+                        </p>
+                    </div>
+                </main>
+            </div>
+        );
+    }
+
+    // ── Voting Not Open ───────────────────────────────────────────────────────
+    if (!status?.voting_open) {
         return (
             <div className="vd-wrapper">
                 <header className="vd-header">
@@ -174,15 +312,21 @@ export default function VotingPage() {
                 </header>
                 <main className="vd-main">
                     <div className="vote-closed-card">
-                        <div style={{ fontSize: 56 }}>🦊</div>
-                        <h2 style={{ marginTop: 16 }}>MetaMask Link Required</h2>
-                        <p style={{ opacity: 0.7, fontSize: 15, maxWidth: 500, margin: "16px auto" }}>
-                            For maximum security, Electra now requires a linked MetaMask wallet to cast votes.
-                            Please go to your dashboard and link your wallet first.
+                        <div style={{ fontSize: 56 }}>🔒</div>
+                        <h2 style={{ marginTop: 16 }}>
+                            {!status?.ganache_connected
+                                ? "Blockchain Offline"
+                                : !status?.contract_deployed
+                                    ? "Election Not Started"
+                                    : "Voting is Closed"}
+                        </h2>
+                        <p style={{ opacity: 0.7, fontSize: 15 }}>
+                            {!status?.ganache_connected
+                                ? "The blockchain network is not available right now. Please try again later."
+                                : !status?.contract_deployed
+                                    ? "The admin has not deployed the voting contract yet. Please wait for the election to begin."
+                                    : "The voting period has ended. Check the results below."}
                         </p>
-                        <button className="vd-tile-btn" style={{ maxWidth: 220, marginTop: 24 }} onClick={() => navigate("/voter-dashboard")}>
-                            Go to Dashboard →
-                        </button>
                     </div>
                 </main>
                 <footer className="vd-footer">
@@ -191,6 +335,78 @@ export default function VotingPage() {
             </div>
         );
     }
+
+    // ── PIN Reset Screen ──────────────────────────────────────────────────────
+    if (resetMode) {
+        return (
+            <div className="vd-wrapper">
+                <header className="vd-header">
+                    <div className="vd-header-inner">
+                        <h1 className="vd-website-name">ELECTRA</h1>
+                        <button className="btn-logout" onClick={() => setResetMode(false)}>← Cancel</button>
+                    </div>
+                </header>
+                <main className="vd-main">
+                    <div className="vote-closed-card" style={{ maxWidth: 500, margin: "0 auto" }}>
+                        <div style={{ fontSize: 48 }}>⚙️</div>
+                        <h2 style={{ marginTop: 16 }}>Reset Voting PIN</h2>
+                        <p style={{ opacity: 0.7, fontSize: 15, marginBottom: 24 }}>
+                            Enter your current 6-digit PIN and then choose a new one.
+                        </p>
+                        
+                        {error && <div className="bc-flash bc-flash--error" style={{ marginBottom: 16 }}>{error}</div>}
+
+                        <div className="pin-input-group" style={{ marginBottom: 12 }}>
+                            <label style={{ display: "block", marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>Current 6-Digit PIN</label>
+                            <input 
+                                type="password" 
+                                maxLength="6"
+                                placeholder="● ● ● ● ● ●"
+                                value={currentPin}
+                                onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ""))}
+                                style={{ width: "100%", padding: "12px", border: "2px solid #ddd", borderRadius: 8, textAlign: "center", fontSize: 24, letterSpacing: 8 }}
+                            />
+                        </div>
+
+                        <div className="pin-input-group" style={{ marginBottom: 12 }}>
+                            <label style={{ display: "block", marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>New 6-Digit PIN</label>
+                            <input 
+                                type="password" 
+                                maxLength="6"
+                                placeholder="● ● ● ● ● ●"
+                                value={pin}
+                                onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+                                style={{ width: "100%", padding: "12px", border: "2px solid #ddd", borderRadius: 8, textAlign: "center", fontSize: 24, letterSpacing: 8 }}
+                            />
+                        </div>
+
+                        <div className="pin-input-group" style={{ marginBottom: 24 }}>
+                            <label style={{ display: "block", marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>Confirm New PIN</label>
+                            <input 
+                                type="password" 
+                                maxLength="6"
+                                placeholder="● ● ● ● ● ●"
+                                value={confirmPin}
+                                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ""))}
+                                style={{ width: "100%", padding: "12px", border: "2px solid #ddd", borderRadius: 8, textAlign: "center", fontSize: 24, letterSpacing: 8 }}
+                            />
+                        </div>
+
+                        <button 
+                            className="bc-btn bc-btn--start" 
+                            style={{ width: "100%" }} 
+                            onClick={handleResetPin}
+                            disabled={busy || pin.length !== 6 || confirmPin.length !== 6 || currentPin.length !== 6}
+                        >
+                            {busy ? "Updating PIN..." : "Update Voting PIN →"}
+                        </button>
+                    </div>
+                </main>
+            </div>
+        );
+    }
+
+
 
     // ── Already Voted Screen ──────────────────────────────────────────────────
     if (voterStatus?.has_voted && !success) {
@@ -272,41 +488,6 @@ export default function VotingPage() {
         );
     }
 
-    // ── Voting Not Open ───────────────────────────────────────────────────────
-    if (!status?.voting_open) {
-        return (
-            <div className="vd-wrapper">
-                <header className="vd-header">
-                    <div className="vd-header-inner">
-                        <h1 className="vd-website-name">ELECTRA</h1>
-                        <button className="btn-logout" onClick={() => navigate("/voter-dashboard")}>← Dashboard</button>
-                    </div>
-                </header>
-                <main className="vd-main">
-                    <div className="vote-closed-card">
-                        <div style={{ fontSize: 56 }}>🔒</div>
-                        <h2 style={{ marginTop: 16 }}>
-                            {!status?.ganache_connected
-                                ? "Blockchain Offline"
-                                : !status?.contract_deployed
-                                    ? "Election Not Started"
-                                    : "Voting is Closed"}
-                        </h2>
-                        <p style={{ opacity: 0.7, fontSize: 15 }}>
-                            {!status?.ganache_connected
-                                ? "The blockchain network is not available right now. Please try again later."
-                                : !status?.contract_deployed
-                                    ? "The admin has not deployed the voting contract yet. Please wait for the election to begin."
-                                    : "The voting period has ended. Check the results below."}
-                        </p>
-                    </div>
-                </main>
-                <footer className="vd-footer">
-                    <div className="vd-footer-inner">© 2025 St. Joseph's College of Engineering & Technology.</div>
-                </footer>
-            </div>
-        );
-    }
 
     // ── Main Voting Booth ─────────────────────────────────────────────────────
     return (
@@ -316,6 +497,13 @@ export default function VotingPage() {
                     <h1 className="vd-website-name">ELECTRA</h1>
                     <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                         <span className="bc-badge bc-badge--open">🟢 Voting Open</span>
+                        <button className="btn-logout" style={{ background: "#495057" }} onClick={() => {
+                            setError("");
+                            setPin("");
+                            setConfirmPin("");
+                            setCurrentPin("");
+                            setResetMode(true);
+                        }}>⚙️ Reset PIN</button>
                         <button className="btn-logout" onClick={() => navigate("/voter-dashboard")}>← Dashboard</button>
                     </div>
                 </div>
@@ -328,7 +516,7 @@ export default function VotingPage() {
                         Select **one member** for each position. <strong>You can only cast your ballot once.</strong>
                     </div>
 
-                    {error && <div className="bc-flash bc-flash--error">{error}</div>}
+                    {error && !confirming && <div className="bc-flash bc-flash--error">{error}</div>}
 
                     {candidates.length === 0 ? (
                         <div className="vote-closed-card">
@@ -363,7 +551,13 @@ export default function VotingPage() {
                                 <button
                                     className="bc-btn bc-btn--start"
                                     style={{ minWidth: 260, fontSize: 16, padding: "14px 32px" }}
-                                    onClick={() => setConfirming(true)}
+                                    onClick={() => {
+                                        setError("");
+                                        setPin("");
+                                        setOtp("");
+                                        setShowOtpField(false);
+                                        setConfirming(true);
+                                    }}
                                     disabled={busy || Object.keys(selections).length === 0}
                                 >
                                     Confirm Ballot →
@@ -374,36 +568,90 @@ export default function VotingPage() {
                 </section>
             </main>
 
-            {/* ── Confirm Modal ─────────────────────────────────────────── */}
+            {/* ── Confirm Modal (Multi-Step) ─────────────────────────────────────────── */}
             {confirming && (
                 <div className="vote-modal-overlay" onClick={() => !busy && setConfirming(false)}>
-                    <div className="vote-modal" onClick={e => e.stopPropagation()}>
-                        <div className="vote-modal-title">⚠️ Confirm Your Ballot</div>
-                        <p className="vote-modal-body">
-                            You have selected <strong>{Object.keys(selections).length}</strong> candidates.
-                            Confirm your choices before submitting to the blockchain:
-                        </p>
-
-                        <div className="ballot-summary" style={{ maxHeight: 250, overflowY: "auto", margin: "15px 0", background: "#f8f9fa", padding: 12, borderRadius: 8 }}>
-                            {Object.entries(selections).map(([pos, cid]) => {
-                                const cand = candidates.find(c => c.id === cid);
-                                return (
-                                    <div key={pos} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #ddd" }}>
-                                        <span style={{ fontWeight: 600, fontSize: 13 }}>{pos}:</span>
-                                        <span style={{ fontSize: 13 }}>{cand?.name}</span>
-                                    </div>
-                                );
-                            })}
+                    <div className="vote-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 550 }}>
+                        <div className="vote-modal-title">🛡️ Secure Ballot Submission</div>
+                        
+                        <div style={{ marginBottom: 20 }}>
+                            <p style={{ fontSize: 13, marginBottom: 12 }}>You are about to cast votes for:</p>
+                            <div className="ballot-summary" style={{ maxHeight: 150, overflowY: "auto", background: "#f1f3f5", padding: 10, borderRadius: 6 }}>
+                                {Object.entries(selections).map(([pos, cid]) => {
+                                    const cand = candidates.find(c => c.id === cid);
+                                    return (
+                                        <div key={pos} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid #dee2e6" }}>
+                                            <span style={{ fontWeight: 600, fontSize: 12 }}>{pos}:</span>
+                                            <span style={{ fontSize: 12 }}>{cand?.name}</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </div>
 
-                        <p style={{ fontSize: 12, opacity: 0.7 }}>
-                            This action uses your Linked MetaMask Wallet and is <strong>permanent</strong>.
+                        {error && <div className="bc-flash bc-flash--error" style={{ marginBottom: 16, fontSize: 12 }}>{error}</div>}
+
+                        <div className="security-steps" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                            {/* Step 1: PIN */}
+                            <div className="secure-input-step">
+                                <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600 }}>1. Enter Voting PIN</label>
+                                <input 
+                                    type="password" 
+                                    maxLength="6"
+                                    placeholder="Enter your 6-digit PIN"
+                                    value={pin}
+                                    onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+                                    style={{ width: "100%", padding: "10px", border: "1px solid #ced4da", borderRadius: 4, letterSpacing: 4 }}
+                                />
+                            </div>
+
+                            {/* Step 2: OTP Request & Entry */}
+                            <div className="secure-input-step">
+                                <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600 }}>2. Identity Verification</label>
+                                {!showOtpField ? (
+                                    <button 
+                                        className="bc-btn" 
+                                        style={{ width: "100%", background: "#495057", color: "#fff", padding: "10px" }}
+                                        onClick={handleSendOtp}
+                                        disabled={otpLoading || pin.length !== 6}
+                                    >
+                                        {otpLoading ? "Sending OTP..." : "Get OTP via Email"}
+                                    </button>
+                                ) : (
+                                    <div style={{ display: "flex", gap: 10 }}>
+                                        <input 
+                                            type="text" 
+                                            maxLength="6"
+                                            placeholder="Enter 6-digit OTP"
+                                            value={otp}
+                                            onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+                                            style={{ flex: 1, padding: "10px", border: "1px solid #ced4da", borderRadius: 4, textAlign: "center", letterSpacing: 4 }}
+                                        />
+                                        <button 
+                                            className="bc-btn" 
+                                            style={{ padding: "0 15px", fontSize: 12 }} 
+                                            onClick={handleSendOtp}
+                                            disabled={otpLoading}
+                                        >
+                                            Resend
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <p style={{ fontSize: 11, opacity: 0.6, marginTop: 20 }}>
+                            Proceeding will cryptographically sign your ballot and store it on the blockchain. This cannot be undone.
                         </p>
 
-                        <div className="vote-modal-actions">
+                        <div className="vote-modal-actions" style={{ marginTop: 24 }}>
                             <button className="bc-btn bc-btn--end" onClick={() => setConfirming(false)} disabled={busy}>Cancel</button>
-                            <button className="bc-btn bc-btn--start" onClick={handleCastVote} disabled={busy}>
-                                {busy ? "Signing…" : "✅ Cast My Ballot"}
+                            <button 
+                                className="bc-btn bc-btn--start" 
+                                onClick={handleCastVote} 
+                                disabled={busy || pin.length !== 6 || otp.length !== 6}
+                            >
+                                {busy ? "Blockchain Broadcasting..." : "🔒 Finalize & Cast Vote"}
                             </button>
                         </div>
                     </div>
