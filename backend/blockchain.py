@@ -137,23 +137,35 @@ def _admin_address() -> str:
     return w3.eth.accounts[0]
 
 
-def _voter_address(voter_index: int) -> str:
-    """
-    Get a deterministic Ganache account for a voter.
-    Accounts[0] = admin, Accounts[1..N] = voters.
-    Ganache typically provides 10 accounts by default.
-    We use voter_index mod available_accounts to assign an eth address.
-    NOTE: For a real deployment each voter would have a MetaMask wallet;
-    in Ganache simulated mode we cycle through test accounts (accounts[1..9]).
-    """
+# ─── Account Operations ───────────────────────────────────────────────────────
+def create_wallet() -> dict:
+    """Generate a new Ethereum account. Returns {'address': str, 'private_key': str}"""
     w3 = get_web3()
-    accounts = w3.eth.accounts
-    # accounts[0] is admin, reserve [1..] for voters
-    max_idx = max(len(accounts) - 1, 1)
-    eth_idx = (voter_index % max_idx) + 1
-    # Clamp to available range
-    eth_idx = min(eth_idx, len(accounts) - 1)
-    return accounts[eth_idx]
+    account = w3.eth.account.create()
+    return {
+        "address": account.address,
+        "private_key": account.key.hex()
+    }
+
+
+def fund_voter(voter_address: str, amount_eth: float = 0.1) -> str:
+    """Send ETH from Admin account to a voter address (to cover gas). Returns tx_hash."""
+    w3 = get_web3()
+    admin = _admin_address()
+    voter_addr = Web3.to_checksum_address(voter_address)
+    
+    tx = {
+        'from': admin,
+        'to': voter_addr,
+        'value': w3.to_wei(amount_eth, 'ether'),
+        'gas': 21000,
+        'gasPrice': w3.eth.gas_price,
+        'nonce': w3.eth.get_transaction_count(admin),
+    }
+    
+    tx_hash = w3.eth.send_transaction(tx)
+    w3.eth.wait_for_transaction_receipt(tx_hash)
+    return tx_hash.hex()
 
 
 # ─── Admin Operations ─────────────────────────────────────────────────────────
@@ -166,6 +178,8 @@ def add_candidate(contract_address: str, name: str, position: str, symbol: str) 
         {"from": admin, "gas": 200_000}
     )
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    if receipt.status != 1:
+        raise RuntimeError(f"Transaction reverted: addCandidate failed for {name}")
     return {"tx_hash": tx_hash.hex(), "status": receipt.status}
 
 
@@ -176,6 +190,8 @@ def start_voting(contract_address: str) -> dict:
     admin = _admin_address()
     tx_hash = contract.functions.startVoting().transact({"from": admin, "gas": 100_000})
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    if receipt.status != 1:
+        raise RuntimeError("Transaction reverted: startVoting failed")
     return {"tx_hash": tx_hash.hex(), "status": receipt.status}
 
 
@@ -186,26 +202,43 @@ def end_voting(contract_address: str) -> dict:
     admin = _admin_address()
     tx_hash = contract.functions.endVoting().transact({"from": admin, "gas": 100_000})
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    if receipt.status != 1:
+        raise RuntimeError("Transaction reverted: endVoting failed")
     return {"tx_hash": tx_hash.hex(), "status": receipt.status}
 
 
 # ─── Voter Operations ─────────────────────────────────────────────────────────
-def cast_vote(contract_address: str, candidate_ids: list, voter_eth_address: str) -> dict:
+def cast_vote(contract_address: str, candidate_ids: list, private_key: str) -> dict:
     """
     Cast a ballot containing multiple candidate IDs on the blockchain.
-    voter_eth_address: the Ganache account assigned to this voter.
+    private_key: the private key of the voter to sign the transaction.
     Returns {"tx_hash": str, "block_number": int}
     """
     w3 = get_web3()
     contract = _get_contract(contract_address)
-    voter_addr = Web3.to_checksum_address(voter_eth_address)
+    
+    # Get the address from the private key
+    account = w3.eth.account.from_key(private_key)
+    voter_addr = account.address
 
     # Ensure all IDs are integers
     ids = [int(cid) for cid in candidate_ids]
 
-    tx_hash = contract.functions.castBallot(ids).transact(
-        {"from": voter_addr, "gas": 500_000} # Increased gas for loop
-    )
+    # Build the transaction
+    nonce = w3.eth.get_transaction_count(voter_addr)
+    tx = contract.functions.castBallot(ids).build_transaction({
+        "from": voter_addr,
+        "gas": 500_000,
+        "nonce": nonce,
+        "gasPrice": w3.eth.gas_price,
+    })
+
+    # Sign the transaction
+    signed_tx = w3.eth.account.sign_transaction(tx, private_key=private_key)
+    
+    # Send the raw transaction
+    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+    
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
     if receipt.status != 1:
         raise RuntimeError("Transaction reverted — ballot not counted")
