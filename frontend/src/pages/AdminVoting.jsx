@@ -36,6 +36,7 @@ export default function AdminVoting() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null); // {type: 'success'|'error', text: ''}
   const [txLog, setTxLog] = useState([]);
+  const [scheduleData, setScheduleData] = useState({ startTime: "", duration: 1 });
 
   const flash = (type, text) => {
     setMsg({ type, text });
@@ -66,6 +67,32 @@ export default function AdminVoting() {
     const t = setInterval(fetchAll, 8000);
     return () => clearInterval(t);
   }, [fetchAll]);
+
+  const handleSaveSchedule = async () => {
+    if (!scheduleData.startTime) return flash("error", "Start time is required");
+    const now = new Date();
+    const selectedStart = new Date(scheduleData.startTime);
+    if (selectedStart <= now) {
+      return flash("error", "Start time must be in the future");
+    }
+    setBusy(true);
+    try {
+      // Convert local datetime-local value to ISO string
+      const isoStart = new Date(scheduleData.startTime).toISOString();
+      const res = await API("/blockchain/schedule", {
+        method: "post",
+        data: { start_time: isoStart, duration_hours: scheduleData.duration }
+      });
+      if (res.data.success) {
+        flash("success", res.data.message);
+        await fetchAll();
+      }
+    } catch (e) {
+      flash("error", e.response?.data?.message || e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const doAction = async (action, label) => {
     setBusy(true);
@@ -141,6 +168,15 @@ export default function AdminVoting() {
                     <span className="bc-info-label">Total Votes</span>
                     <span>{status?.total_votes ?? 0}</span>
                   </div>
+                  {status?.schedule && (
+                    <div className="bc-info-item" style={{ gridColumn: "1 / -1", borderTop: "1px solid #eee", paddingTop: 10, marginTop: 5 }}>
+                      <span className="bc-info-label">Active Schedule</span>
+                      <span style={{ fontSize: 13, color: "#1e3c72" }}>
+                        Starts: <strong>{new Date(status.schedule.start_time).toLocaleString()}</strong><br />
+                        Ends: <strong>{new Date(status.schedule.end_time).toLocaleString()}</strong>
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -189,6 +225,51 @@ export default function AdminVoting() {
                     </p>
                   </div>
 
+                  <div className="bc-control-btn-wrap" style={{ borderLeft: "1px solid #eee", paddingLeft: 20 }}>
+                    <div className="bc-card-title" style={{ fontSize: 14, marginBottom: 12 }}>📅 Schedule Election</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div className="vd-input-group">
+                        <label style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Start Date & Time</label>
+                        <input
+                          type="datetime-local"
+                          className="vd-input"
+                          style={{ padding: "8px 12px" }}
+                          min={new Date().toISOString().slice(0, 16)}
+                          value={scheduleData.startTime}
+                          onChange={e => setScheduleData(prev => ({ ...prev, startTime: e.target.value }))}
+                        />
+                      </div>
+                      <div className="vd-input-group">
+                        <label style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Duration (Hours)</label>
+                        <input
+                          type="number"
+                          className="vd-input"
+                          style={{ padding: "8px 12px" }}
+                          min="0.1"
+                          step="0.1"
+                          value={scheduleData.duration}
+                          onChange={e => setScheduleData(prev => ({ ...prev, duration: parseFloat(e.target.value) || 0 }))}
+                        />
+                      </div>
+                      {scheduleData.startTime && scheduleData.duration > 0 && (
+                        <div style={{ fontSize: 11, background: "#f8fafc", padding: 8, borderRadius: 6, border: "1px solid #e2e8f0" }}>
+                          <span style={{ color: "#64748b" }}>Calculated End Time:</span><br />
+                          <strong style={{ color: "#0b2340" }}>
+                            {new Date(new Date(scheduleData.startTime).getTime() + scheduleData.duration * 3600000).toLocaleString()}
+                          </strong>
+                        </div>
+                      )}
+                      <button
+                        className="bc-btn bc-btn--add"
+                        style={{ marginTop: 5, padding: "10px" }}
+                        onClick={handleSaveSchedule}
+                        disabled={busy || !status?.ganache_connected}
+                      >
+                        💾 Save Schedule
+                      </button>
+                    </div>
+                  </div>
+
                 </div>
               </div>
 
@@ -213,7 +294,7 @@ export default function AdminVoting() {
                           <h4 style={{ margin: 0, color: "#1e3c72", fontSize: 15 }}>{posName}</h4>
                           {maxV > 0 && (
                             tied
-                              ? <span style={{ fontSize: 11, color: "#6c757d", fontWeight: 700, padding: "2px 8px", background: "#f8f9fa", borderRadius: 12 }}>⚖️ Tied</span>
+                              ? <span style={{ fontSize: 11, color: "#4b5563", fontWeight: 700, padding: "2px 8px", background: "#f1f5f9", borderRadius: 12, border: '1px solid #e2e8f0' }}>⚖️ Tied</span>
                               : <span style={{ fontSize: 11, color: "#1e7e34", fontWeight: 700, padding: "2px 8px", background: "#e6f4ea", borderRadius: 12 }}>🏆 Lead: {posCands[0].name}</span>
                           )}
                         </div>

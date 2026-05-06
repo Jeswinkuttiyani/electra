@@ -17,7 +17,15 @@ function VoterDashboard() {
   const [profilePhotoFailed, setProfilePhotoFailed] = useState(false);
   const [walletAddress, setWalletAddress] = useState("");
   const [notifications, setNotifications] = useState([]);
-  
+  const [electionStatus, setElectionStatus] = useState(null);
+  const [timeLeft, setTimeLeft] = useState("");
+
+  // Photo upload state
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoUploadMsg, setPhotoUploadMsg] = useState("");
+  const [photoUploadErr, setPhotoUploadErr] = useState("");
+  const photoInputRef = useState(() => ({ current: null }))[0];
+
   // PIN Reset State
   const [showResetPinModal, setShowResetPinModal] = useState(false);
   const [currentPin, setCurrentPin] = useState("");
@@ -45,6 +53,41 @@ function VoterDashboard() {
     const normalized = url.startsWith("/") ? url.slice(1) : url;
     if (!backendOrigin) return `/${normalized}`;
     return `${backendOrigin}/${normalized}`;
+  };
+
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setPhotoUploadErr("Please select a valid image file.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setPhotoUploadErr("Image must be under 5 MB.");
+      return;
+    }
+    setPhotoUploading(true);
+    setPhotoUploadMsg("");
+    setPhotoUploadErr("");
+    try {
+      const token = localStorage.getItem("token");
+      const form = new FormData();
+      form.append("photo", file);
+      const res = await api.post("/voter/upload-photo", form, {
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "multipart/form-data" }
+      });
+      if (res.data.success) {
+        setPhotoUrl(res.data.photo_url);
+        setProfilePhotoFailed(false);
+        setPhotoUploadMsg("✅ Photo updated!");
+      } else {
+        setPhotoUploadErr(res.data.message || "Upload failed.");
+      }
+    } catch (err) {
+      setPhotoUploadErr(err.response?.data?.message || "Upload failed.");
+    } finally {
+      setPhotoUploading(false);
+    }
   };
 
   const fetchNotifications = async () => {
@@ -109,9 +152,52 @@ function VoterDashboard() {
       }
     };
 
+    const fetchElectionStatus = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        const res = await api.get("/blockchain/status", {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.data.success) {
+          setElectionStatus(res.data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch blockchain status:", err);
+      }
+    };
+
     fetchProfile();
     fetchNotifications();
+    fetchElectionStatus();
+
+    const interval = setInterval(fetchElectionStatus, 10000);
+    return () => clearInterval(interval);
   }, [navigate]);
+
+  useEffect(() => {
+    if (!electionStatus?.schedule || !electionStatus?.voting_open) {
+      setTimeLeft("");
+      return;
+    }
+
+    const timer = setInterval(() => {
+      const now = new Date();
+      const end = new Date(electionStatus.schedule.end_time);
+      const diff = end - now;
+
+      if (diff <= 0) {
+        setTimeLeft("Finished");
+        clearInterval(timer);
+      } else {
+        const h = Math.floor(diff / 3600000);
+        const m = Math.floor((diff % 3600000) / 60000);
+        const s = Math.floor((diff % 60000) / 1000);
+        setTimeLeft(`${h}h ${m}m ${s}s`);
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [electionStatus]);
 
   const handleLogout = () => {
     localStorage.clear(); // Clear EVERYTHING to prevent session leaks
@@ -122,17 +208,17 @@ function VoterDashboard() {
     e.preventDefault();
     setResetError("");
     setResetSuccess("");
-    
+
     if (currentPin.length !== 6 || newPin.length !== 6 || confirmNewPin.length !== 6) {
       setResetError("All PIN fields must be exactly 6 digits.");
       return;
     }
-    
+
     if (newPin !== confirmNewPin) {
       setResetError("New PIN and Confirm PIN do not match.");
       return;
     }
-    
+
     setIsResetting(true);
     try {
       const token = localStorage.getItem("token");
@@ -142,13 +228,13 @@ function VoterDashboard() {
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       if (res.data.success) {
         setResetSuccess("Your voting PIN has been successfully reset.");
         setCurrentPin("");
         setNewPin("");
         setConfirmNewPin("");
-        
+
         // Auto close after 3 seconds
         setTimeout(() => {
           setShowResetPinModal(false);
@@ -180,18 +266,52 @@ function VoterDashboard() {
           if (!latest) return null;
 
           return (
-            <section className="notif-banner">
-              <div className="notif-banner-left">
-                <div className="notif-banner-title">{latest.title || "Notification"}</div>
-                <div className="notif-banner-message">{latest.message}</div>
+            <section className="notif-banner" style={{
+              borderLeft: '4px solid #2563eb',
+              background: 'linear-gradient(90deg, #ffffff 0%, #f8fafc 100%)',
+              position: 'relative',
+              overflow: 'hidden'
+            }}>
+              <div style={{
+                position: 'absolute',
+                top: 0,
+                right: 0,
+                padding: '4px 12px',
+                background: '#2563eb',
+                color: 'white',
+                fontSize: '10px',
+                fontWeight: 800,
+                borderBottomLeftRadius: 8,
+                letterSpacing: '1px'
+              }}>
+                NEW
+              </div>
+
+              <div className="notif-banner-left" style={{ paddingLeft: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: '20px' }}>📢</span>
+                  <div className="notif-banner-title" style={{ fontSize: '16px', letterSpacing: '-0.2px' }}>{latest.title || "Announcement"}</div>
+                </div>
+                <div className="notif-banner-message" style={{ color: '#475569', fontSize: '14.5px', marginTop: 10 }}>{latest.message}</div>
                 {latest.created_at && (
-                  <div className="notif-banner-date">{new Date(latest.created_at).toLocaleString()}</div>
+                  <div className="notif-banner-date" style={{ fontWeight: 600, color: '#94a3b8' }}>
+                    Sent on {new Date(latest.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                  </div>
                 )}
               </div>
 
-              <div className="notif-banner-actions">
-                <button className="vd-tile-btn" type="button" style={{ maxWidth: 160 }} onClick={() => navigate("/notifications")}>View all</button>
-                <button className="notif-dismiss" type="button" onClick={() => dismissNotification(latest._id)}>×</button>
+              <div className="notif-banner-actions" style={{ alignSelf: 'center' }}>
+                <button className="vd-tile-btn" type="button" style={{
+                  background: '#f1f5f9',
+                  color: '#1e293b',
+                  border: '1px solid #e2e8f0',
+                  boxShadow: 'none'
+                }} onClick={() => navigate("/notifications")}>
+                  View All History
+                </button>
+                <button className="notif-dismiss" type="button" style={{ background: 'transparent', border: 'none', color: '#94a3b8' }} onClick={() => dismissNotification(latest._id)}>
+                  ✕
+                </button>
               </div>
             </section>
           );
@@ -201,7 +321,38 @@ function VoterDashboard() {
         <section className="vd-profile-tile">
           <h2 className="vd-section-title">My Profile</h2>
           <div className="vd-profile-card">
-            <div className="profile-avatar">👤</div>
+            {/* Clickable avatar */}
+            <div className="profile-avatar-wrap">
+              <div
+                className="profile-avatar profile-avatar--clickable"
+                onClick={() => { if (!photoUploading) document.getElementById("profilePhotoInput").click(); }}
+                title="Click to update your photo"
+              >
+                {photoUrl && !profilePhotoFailed ? (
+                  <img
+                    src={getPhotoSrc(photoUrl)}
+                    alt="Profile"
+                    className="profile-avatar-img"
+                    onError={() => setProfilePhotoFailed(true)}
+                  />
+                ) : (
+                  <span style={{ fontSize: 48 }}>👤</span>
+                )}
+                <div className="profile-avatar-overlay">
+                  {photoUploading ? "⏳" : "📷"}
+                </div>
+              </div>
+              <input
+                id="profilePhotoInput"
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={handlePhotoUpload}
+              />
+              {photoUploadMsg && <div className="photo-upload-success">{photoUploadMsg}</div>}
+              {photoUploadErr && <div className="photo-upload-error">{photoUploadErr}</div>}
+              <p className="profile-avatar-hint">Click photo to update</p>
+            </div>
             <div className="profile-details">
               <div className="profile-row">
                 <span className="profile-label">Voter ID:</span>
@@ -243,18 +394,58 @@ function VoterDashboard() {
                   )}
                 </span>
               </div>
+              <div className="profile-row profile-row--action">
+                <span className="profile-label">Voting PIN:</span>
+                <button
+                  className="btn-reset-pin-inline"
+                  onClick={() => {
+                    setShowResetPinModal(true);
+                    setResetError("");
+                    setResetSuccess("");
+                    setCurrentPin("");
+                    setNewPin("");
+                    setConfirmNewPin("");
+                  }}
+                >
+                  🔑 Reset PIN
+                </button>
+              </div>
             </div>
           </div>
         </section>
 
         {/* Action Tiles */}
         <section className="vd-action-tiles">
-          <div className="vd-tile vd-tile--highlight">
+          <div className={`vd-tile vd-tile--highlight ${electionStatus?.voting_open ? "vd-tile--active" : ""}`}>
             <div className="vd-tile-icon">🗳️</div>
             <h3 className="vd-tile-title">Cast Your Vote</h3>
             <p className="vd-tile-desc">Securely cast your vote on the blockchain. Each voter gets exactly one vote.</p>
+
+            {electionStatus?.schedule && (
+              <div style={{ margin: "12px 0", padding: "10px", background: "rgba(255,255,255,0.1)", borderRadius: 10, fontSize: 13, color: "white" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span>Starts:</span>
+                  <strong>{new Date(electionStatus.schedule.start_time).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span>Ends:</span>
+                  <strong>{new Date(electionStatus.schedule.end_time).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</strong>
+                </div>
+                {timeLeft && electionStatus.voting_open && (
+                  <div style={{ marginTop: 8, textAlign: "center", background: "#f59e0b", color: "#000", padding: "4px", borderRadius: 4, fontWeight: 800 }}>
+                    ⏳ {timeLeft} REMAINING
+                  </div>
+                )}
+                {!electionStatus.voting_open && electionStatus.schedule && new Date() < new Date(electionStatus.schedule.start_time) && (
+                  <div style={{ marginTop: 8, textAlign: "center", background: "#3b82f6", color: "#fff", padding: "4px", borderRadius: 4, fontWeight: 800 }}>
+                    🕒 COMING SOON
+                  </div>
+                )}
+              </div>
+            )}
+
             <button className="vd-tile-btn vd-tile-btn--primary" onClick={() => navigate("/vote")}>
-              Vote Now
+              {electionStatus?.voting_open ? "Vote Now →" : "View Booth"}
             </button>
           </div>
 
@@ -303,38 +494,24 @@ function VoterDashboard() {
             </button>
           </div>
 
-          <div className="vd-tile">
-            <div className="vd-tile-icon">🔑</div>
-            <h3 className="vd-tile-title">Reset Voting PIN</h3>
-            <p className="vd-tile-desc">Safely change your 6-digit voting PIN used to encrypt your blockchain digital signature.</p>
-            <button className="vd-tile-btn" onClick={() => {
-              setShowResetPinModal(true);
-              setResetError("");
-              setResetSuccess("");
-              setCurrentPin("");
-              setNewPin("");
-              setConfirmNewPin("");
-            }}>
-              Reset PIN
-            </button>
-          </div>
         </section>
+
         {/* Reset PIN Modal */}
         {showResetPinModal && (
           <div className="pin-modal-overlay">
             <div className="pin-modal-content">
               <h3>Reset Voting PIN</h3>
               <p className="pin-modal-desc">Please enter your current PIN and your new 6-digit PIN below.</p>
-              
+
               {resetError && <div className="pin-error-msg">{resetError}</div>}
               {resetSuccess && <div className="pin-success-msg">{resetSuccess}</div>}
-              
+
               <form onSubmit={handleResetPin} className="pin-reset-form">
                 <div className="pin-input-group">
                   <label>Current PIN</label>
-                  <input 
-                    type="password" 
-                    maxLength="6" 
+                  <input
+                    type="password"
+                    maxLength="6"
                     value={currentPin}
                     onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ""))}
                     placeholder="Enter current 6-digit PIN"
@@ -342,12 +519,12 @@ function VoterDashboard() {
                     required
                   />
                 </div>
-                
+
                 <div className="pin-input-group">
                   <label>New PIN</label>
-                  <input 
-                    type="password" 
-                    maxLength="6" 
+                  <input
+                    type="password"
+                    maxLength="6"
                     value={newPin}
                     onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
                     placeholder="Enter new 6-digit PIN"
@@ -355,12 +532,12 @@ function VoterDashboard() {
                     required
                   />
                 </div>
-                
+
                 <div className="pin-input-group">
                   <label>Confirm New PIN</label>
-                  <input 
-                    type="password" 
-                    maxLength="6" 
+                  <input
+                    type="password"
+                    maxLength="6"
                     value={confirmNewPin}
                     onChange={(e) => setConfirmNewPin(e.target.value.replace(/\D/g, ""))}
                     placeholder="Re-enter new 6-digit PIN"
@@ -368,7 +545,7 @@ function VoterDashboard() {
                     required
                   />
                 </div>
-                
+
                 <div className="pin-modal-actions">
                   {!resetSuccess ? (
                     <>

@@ -108,14 +108,20 @@ export default function ElectionResults() {
             <>
               {/* ── Summary Stats ──────────────────────────────────── */}
               <div className="bc-info-grid" style={{ marginTop: 20, marginBottom: 8 }}>
-                <div className="bc-info-item">
-                  <span className="bc-info-label">Total Votes</span>
-                  <span style={{ fontSize: 24, fontWeight: 800 }}>{votingOpen ? "—" : totalVotes}</span>
-                </div>
-                <div className="bc-info-item">
-                  <span className="bc-info-label">Candidates</span>
-                  <span style={{ fontSize: 24, fontWeight: 800 }}>{data.candidate_count ?? 0}</span>
-                </div>
+                {!votingOpen && (
+                  <>
+                    <div className="bc-info-item">
+                      <span className="bc-info-label">Total Votes</span>
+                      <span style={{ fontSize: 24, fontWeight: 800, color: "#0b2340" }}>{totalVotes}</span>
+                    </div>
+                    {positions.map(pos => (
+                      <div key={pos.position} className="bc-info-item">
+                        <span className="bc-info-label">{pos.position} Candidates</span>
+                        <span style={{ fontSize: 24, fontWeight: 800, color: "#0b2340" }}>{(pos.candidates || []).length}</span>
+                      </div>
+                    ))}
+                  </>
+                )}
                 <div className="bc-info-item">
                   <span className="bc-info-label">Status</span>
                   <span style={{ fontWeight: 700 }}>{votingOpen ? "In Progress" : totalVotes > 0 ? "Concluded" : "Not Started"}</span>
@@ -124,10 +130,10 @@ export default function ElectionResults() {
 
               {/* ── Results by Position ────────────────────────────── */}
               {votingOpen ? (
-                <div className="vote-closed-card" style={{ marginTop: 40, background: "rgba(30, 60, 114, 0.05)", border: "1px dashed #1e3c72" }}>
-                  <div style={{ fontSize: 48 }}>📊</div>
-                  <h3>Voting is in Progress</h3>
-                  <p>Live results are hidden to ensure election integrity. Final tallies will be visible here once the polls close.</p>
+                <div className="vote-closed-card" style={{ marginTop: 40, background: "rgba(30, 60, 114, 0.03)", border: "1px dashed #1e3c72" }}>
+                  <div style={{ fontSize: 48, marginBottom: 16 }}>📊</div>
+                  <h3 style={{ color: "#0b2340", fontSize: 24, fontWeight: 800, margin: "0 0 12px" }}>Voting is in Progress</h3>
+                  <p style={{ color: "#475569", fontSize: 15, margin: 0, lineHeight: 1.6 }}>Live results are hidden to ensure election integrity. Final tallies will be visible here once the polls close.</p>
                 </div>
               ) : (
                 positions.map((pos) => (
@@ -183,7 +189,7 @@ export default function ElectionResults() {
                               </div>
                               <VoteBar value={c.vote_count} max={Math.max(totalVotes, 1)} color={isWinner ? "#1e7e34" : "#1e3c72"} />
                               {c.branch_name && (
-                                <div style={{ fontSize: 12, opacity: 0.6, marginTop: 4 }}>{c.branch_name}</div>
+                                <div className="results-cand-branch">{c.branch_name}</div>
                               )}
                             </div>
                           </div>

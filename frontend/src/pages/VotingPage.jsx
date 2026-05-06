@@ -54,6 +54,7 @@ export default function VotingPage() {
     const [busy, setBusy] = useState(false);
     const [success, setSuccess] = useState(null); // { tx_hash, candidate_names }
     const [error, setError] = useState("");
+    const [timeLeft, setTimeLeft] = useState("");
     const [pin, setPin] = useState("");
     const [confirmPin, setConfirmPin] = useState("");
     const [currentPin, setCurrentPin] = useState("");
@@ -84,6 +85,31 @@ export default function VotingPage() {
     }, []);
 
     useEffect(() => { fetchData(); }, [fetchData]);
+
+    useEffect(() => {
+        if (!status?.schedule || !status?.voting_open) {
+            setTimeLeft("");
+            return;
+        }
+
+        const timer = setInterval(() => {
+            const now = new Date();
+            const end = new Date(status.schedule.end_time);
+            const diff = end - now;
+
+            if (diff <= 0) {
+                setTimeLeft("Finished");
+                clearInterval(timer);
+            } else {
+                const h = Math.floor(diff / 3600000);
+                const m = Math.floor((diff % 3600000) / 60000);
+                const s = Math.floor((diff % 60000) / 1000);
+                setTimeLeft(`${h}h ${m}m ${s}s`);
+            }
+        }, 1000);
+
+        return () => clearInterval(timer);
+    }, [status]);
 
     const handleSetupPin = async () => {
         if (pin.length !== 6 || !/^\d+$/.test(pin)) {
@@ -126,9 +152,9 @@ export default function VotingPage() {
         try {
             const res = await API("/send-otp", {
                 method: "post",
-                data: { 
+                data: {
                     voter_id: voterStatus?.voter_id || localStorage.getItem("voterId"),
-                    email: voterStatus?.email || localStorage.getItem("email") 
+                    email: voterStatus?.email || localStorage.getItem("email")
                 }
             });
             if (res.data.success) {
@@ -199,7 +225,7 @@ export default function VotingPage() {
         try {
             const res = await API("/voting-pin/reset", {
                 method: "post",
-                data: { 
+                data: {
                     current_pin: currentPin,
                     new_pin: pin
                 }
@@ -252,16 +278,16 @@ export default function VotingPage() {
                         <div style={{ fontSize: 48 }}>🛡️</div>
                         <h2 style={{ marginTop: 16 }}>Secure Your Vote</h2>
                         <p style={{ opacity: 0.7, fontSize: 15, marginBottom: 24 }}>
-                            Before you can vote, you must set a 6-digit <strong>Voting PIN</strong>. 
+                            Before you can vote, you must set a 6-digit <strong>Voting PIN</strong>.
                             This PIN will be used to encrypt your blockchain digital signature.
                         </p>
-                        
+
                         {error && <div className="bc-flash bc-flash--error" style={{ marginBottom: 16 }}>{error}</div>}
 
                         <div className="pin-input-group" style={{ marginBottom: 12 }}>
                             <label style={{ display: "block", marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>Create 6-Digit PIN</label>
-                            <input 
-                                type="password" 
+                            <input
+                                type="password"
                                 maxLength="6"
                                 placeholder="● ● ● ● ● ●"
                                 value={pin}
@@ -272,8 +298,8 @@ export default function VotingPage() {
 
                         <div className="pin-input-group" style={{ marginBottom: 24 }}>
                             <label style={{ display: "block", marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>Confirm PIN</label>
-                            <input 
-                                type="password" 
+                            <input
+                                type="password"
                                 maxLength="6"
                                 placeholder="● ● ● ● ● ●"
                                 value={confirmPin}
@@ -282,9 +308,9 @@ export default function VotingPage() {
                             />
                         </div>
 
-                        <button 
-                            className="bc-btn bc-btn--start" 
-                            style={{ width: "100%" }} 
+                        <button
+                            className="bc-btn bc-btn--start"
+                            style={{ width: "100%" }}
                             onClick={handleSetupPin}
                             disabled={busy || pin.length !== 6 || confirmPin.length !== 6}
                         >
@@ -313,14 +339,26 @@ export default function VotingPage() {
                 <main className="vd-main">
                     <div className="vote-closed-card">
                         <div style={{ fontSize: 56 }}>🔒</div>
-                        <h2 style={{ marginTop: 16 }}>
+                        <h2 style={{ marginTop: 16, color: "#0b2340", fontSize: 26, fontWeight: 800 }}>
                             {!status?.ganache_connected
                                 ? "Blockchain Offline"
                                 : !status?.contract_deployed
                                     ? "Election Not Started"
                                     : "Voting is Closed"}
                         </h2>
-                        <p style={{ opacity: 0.7, fontSize: 15 }}>
+                        {status?.schedule && (
+                            <div style={{ marginTop: 20, padding: 15, background: "#f8fafc", borderRadius: 12, border: "1px solid #e2e8f0" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 14 }}>
+                                    <span style={{ fontWeight: 600, color: "#64748b" }}>Scheduled Start:</span>
+                                    <span style={{ fontWeight: 700, color: "#0b2340" }}>{new Date(status.schedule.start_time).toLocaleString()}</span>
+                                </div>
+                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+                                    <span style={{ fontWeight: 600, color: "#64748b" }}>Scheduled End:</span>
+                                    <span style={{ fontWeight: 700, color: "#0b2340" }}>{new Date(status.schedule.end_time).toLocaleString()}</span>
+                                </div>
+                            </div>
+                        )}
+                        <p style={{ color: "#475569", fontSize: 15, lineHeight: 1.6, marginTop: 12 }}>
                             {!status?.ganache_connected
                                 ? "The blockchain network is not available right now. Please try again later."
                                 : !status?.contract_deployed
@@ -353,13 +391,13 @@ export default function VotingPage() {
                         <p style={{ opacity: 0.7, fontSize: 15, marginBottom: 24 }}>
                             Enter your current 6-digit PIN and then choose a new one.
                         </p>
-                        
+
                         {error && <div className="bc-flash bc-flash--error" style={{ marginBottom: 16 }}>{error}</div>}
 
                         <div className="pin-input-group" style={{ marginBottom: 12 }}>
                             <label style={{ display: "block", marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>Current 6-Digit PIN</label>
-                            <input 
-                                type="password" 
+                            <input
+                                type="password"
                                 maxLength="6"
                                 placeholder="● ● ● ● ● ●"
                                 value={currentPin}
@@ -370,8 +408,8 @@ export default function VotingPage() {
 
                         <div className="pin-input-group" style={{ marginBottom: 12 }}>
                             <label style={{ display: "block", marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>New 6-Digit PIN</label>
-                            <input 
-                                type="password" 
+                            <input
+                                type="password"
                                 maxLength="6"
                                 placeholder="● ● ● ● ● ●"
                                 value={pin}
@@ -382,8 +420,8 @@ export default function VotingPage() {
 
                         <div className="pin-input-group" style={{ marginBottom: 24 }}>
                             <label style={{ display: "block", marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>Confirm New PIN</label>
-                            <input 
-                                type="password" 
+                            <input
+                                type="password"
                                 maxLength="6"
                                 placeholder="● ● ● ● ● ●"
                                 value={confirmPin}
@@ -392,9 +430,9 @@ export default function VotingPage() {
                             />
                         </div>
 
-                        <button 
-                            className="bc-btn bc-btn--start" 
-                            style={{ width: "100%" }} 
+                        <button
+                            className="bc-btn bc-btn--start"
+                            style={{ width: "100%" }}
                             onClick={handleResetPin}
                             disabled={busy || pin.length !== 6 || confirmPin.length !== 6 || currentPin.length !== 6}
                         >
@@ -455,13 +493,13 @@ export default function VotingPage() {
                     <div className="vote-success-card">
                         <div className="vote-success-icon">🗳️</div>
                         <h2 className="vote-success-title">Ballot Cast Successfully!</h2>
-                        <div style={{ margin: "20px 0", textAlign: "left" }}>
-                            <p style={{ marginBottom: 10, fontSize: 14, fontWeight: 600 }}>Your Choices:</p>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <div style={{ margin: "24px 0", textAlign: "left" }}>
+                            <p style={{ marginBottom: 12, fontSize: 14, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px" }}>Your Choices:</p>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                                 {success.candidates.map(c => (
-                                    <div key={c.id} style={{ background: "#f8f9fa", padding: "8px 12px", borderRadius: 6, fontSize: 13, borderLeft: "3px solid #1e3c72" }}>
-                                        <div style={{ fontWeight: 700 }}>{c.position}</div>
-                                        <div>{c.name}</div>
+                                    <div key={c.id} style={{ background: "#f1f5f9", padding: "12px 16px", borderRadius: 10, fontSize: 13, borderLeft: "4px solid #1e3c72", border: '1px solid #e2e8f0', borderLeftWidth: '4px' }}>
+                                        <div style={{ color: "#64748b", fontWeight: 700, fontSize: 11, textTransform: "uppercase", marginBottom: 2 }}>{c.position}</div>
+                                        <div style={{ color: "#0b2340", fontWeight: 800, fontSize: 14 }}>{c.name}</div>
                                     </div>
                                 ))}
                             </div>
@@ -496,6 +534,16 @@ export default function VotingPage() {
                 <div className="vd-header-inner">
                     <h1 className="vd-website-name">ELECTRA</h1>
                     <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                        {status?.schedule && (
+                            <div className="bc-badge" style={{ background: "#f1f5f9", color: "#1e3c72", border: "1px solid #cbd5e1" }}>
+                                🕒 Ends: {new Date(status.schedule.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                        )}
+                        {timeLeft && (
+                            <div className="bc-badge" style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>
+                                ⏳ {timeLeft} left
+                            </div>
+                        )}
                         <span className="bc-badge bc-badge--open">🟢 Voting Open</span>
                         <button className="btn-logout" style={{ background: "#495057" }} onClick={() => {
                             setError("");
@@ -573,16 +621,16 @@ export default function VotingPage() {
                 <div className="vote-modal-overlay" onClick={() => !busy && setConfirming(false)}>
                     <div className="vote-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 550 }}>
                         <div className="vote-modal-title">🛡️ Secure Ballot Submission</div>
-                        
+
                         <div style={{ marginBottom: 20 }}>
                             <p style={{ fontSize: 13, marginBottom: 12 }}>You are about to cast votes for:</p>
-                            <div className="ballot-summary" style={{ maxHeight: 150, overflowY: "auto", background: "#f1f3f5", padding: 10, borderRadius: 6 }}>
+                            <div className="ballot-summary" style={{ maxHeight: 150, overflowY: "auto", background: "#f8fafc", padding: 12, borderRadius: 10, border: '1px solid #e2e8f0' }}>
                                 {Object.entries(selections).map(([pos, cid]) => {
                                     const cand = candidates.find(c => c.id === cid);
                                     return (
-                                        <div key={pos} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid #dee2e6" }}>
-                                            <span style={{ fontWeight: 600, fontSize: 12 }}>{pos}:</span>
-                                            <span style={{ fontSize: 12 }}>{cand?.name}</span>
+                                        <div key={pos} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #f1f5f9", color: "#1e293b" }}>
+                                            <span style={{ fontWeight: 700, fontSize: 12, color: "#475569" }}>{pos}:</span>
+                                            <span style={{ fontSize: 13, fontWeight: 600 }}>{cand?.name}</span>
                                         </div>
                                     );
                                 })}
@@ -595,13 +643,13 @@ export default function VotingPage() {
                             {/* Step 1: PIN */}
                             <div className="secure-input-step">
                                 <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600 }}>1. Enter Voting PIN</label>
-                                <input 
-                                    type="password" 
+                                <input
+                                    type="password"
                                     maxLength="6"
                                     placeholder="Enter your 6-digit PIN"
                                     value={pin}
                                     onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-                                    style={{ width: "100%", padding: "10px", border: "1px solid #ced4da", borderRadius: 4, letterSpacing: 4 }}
+                                    style={{ width: "100%", padding: "12px", border: "1px solid #cbd5e1", borderRadius: 8, letterSpacing: 6, fontSize: '1.1rem', background: '#f8fafc', color: '#0b2340', textAlign: 'center' }}
                                 />
                             </div>
 
@@ -609,9 +657,9 @@ export default function VotingPage() {
                             <div className="secure-input-step">
                                 <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600 }}>2. Identity Verification</label>
                                 {!showOtpField ? (
-                                    <button 
-                                        className="bc-btn" 
-                                        style={{ width: "100%", background: "#495057", color: "#fff", padding: "10px" }}
+                                    <button
+                                        className="bc-btn"
+                                        style={{ width: "100%", background: "#1e3c72", color: "#fff", padding: "12px", border: 'none', borderRadius: 8, fontWeight: 700 }}
                                         onClick={handleSendOtp}
                                         disabled={otpLoading || pin.length !== 6}
                                     >
@@ -619,17 +667,17 @@ export default function VotingPage() {
                                     </button>
                                 ) : (
                                     <div style={{ display: "flex", gap: 10 }}>
-                                        <input 
-                                            type="text" 
+                                        <input
+                                            type="text"
                                             maxLength="6"
                                             placeholder="Enter 6-digit OTP"
                                             value={otp}
                                             onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
-                                            style={{ flex: 1, padding: "10px", border: "1px solid #ced4da", borderRadius: 4, textAlign: "center", letterSpacing: 4 }}
+                                            style={{ flex: 1, padding: "10px", border: "1px solid #cbd5e1", borderRadius: 8, textAlign: "center", letterSpacing: 6, background: '#f8fafc', color: '#0b2340', fontSize: '1rem' }}
                                         />
-                                        <button 
-                                            className="bc-btn" 
-                                            style={{ padding: "0 15px", fontSize: 12 }} 
+                                        <button
+                                            className="bc-btn"
+                                            style={{ padding: "0 15px", fontSize: 12 }}
                                             onClick={handleSendOtp}
                                             disabled={otpLoading}
                                         >
@@ -646,9 +694,9 @@ export default function VotingPage() {
 
                         <div className="vote-modal-actions" style={{ marginTop: 24 }}>
                             <button className="bc-btn bc-btn--end" onClick={() => setConfirming(false)} disabled={busy}>Cancel</button>
-                            <button 
-                                className="bc-btn bc-btn--start" 
-                                onClick={handleCastVote} 
+                            <button
+                                className="bc-btn bc-btn--start"
+                                onClick={handleCastVote}
                                 disabled={busy || pin.length !== 6 || otp.length !== 6}
                             >
                                 {busy ? "Blockchain Broadcasting..." : "🔒 Finalize & Cast Vote"}

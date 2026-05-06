@@ -28,14 +28,30 @@ function AdminReports() {
   }, []);
 
   const handleDeleteVoter = async (voterId) => {
-    if (!confirm(`Delete voter ${voterId}? This cannot be undone.`)) return;
+    if (!window.confirm(`⚠️ DANGER: Are you sure you want to PERMANENTLY DELETE voter ${voterId}? This will remove their account and all associated reports.`)) return;
     try {
       const token = localStorage.getItem("token");
-      await api.delete(`/voter/${voterId}`, { headers: { Authorization: `Bearer ${token}` } });
-      setMessage("Voter deleted");
-      fetchReports();
+      const res = await api.delete(`/voter/${voterId}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.data.success) {
+        setMessage("Voter and associated reports deleted successfully");
+        fetchReports();
+      }
     } catch (err) {
       setMessage(err.response?.data?.message || "Failed to delete voter");
+    }
+  };
+
+  const handleDismissReport = async (reportId) => {
+    if (!window.confirm("Dismiss this report? The voter account will NOT be affected.")) return;
+    try {
+      const token = localStorage.getItem("token");
+      const res = await api.delete(`/report/${reportId}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.data.success) {
+        setMessage("Report dismissed");
+        fetchReports();
+      }
+    } catch (err) {
+      setMessage(err.response?.data?.message || "Failed to dismiss report");
     }
   };
 
@@ -117,8 +133,17 @@ function AdminReports() {
                         <td style={{ maxWidth: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.description}</td>
                         <td>{new Date(r.created_at).toLocaleString()}</td>
                         <td>
-                          <button className="vd-tile-btn" style={{ padding: '6px 10px', marginRight: 8 }} onClick={() => openEdit(r.reported_voter_id)}>Edit</button>
-                          <button className="btn-cancel" onClick={() => handleDeleteVoter(r.reported_voter_id)}>Delete</button>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            <button className="vd-tile-btn" style={{ padding: '6px 12px' }} onClick={() => openEdit(r.reported_voter_id)}>
+                              Edit Voter
+                            </button>
+                            <button className="vd-tile-btn" style={{ padding: '6px 12px', background: '#e5e7eb', color: '#374151' }} onClick={() => handleDismissReport(r._id)}>
+                              Dismiss Report
+                            </button>
+                            <button className="btn-cancel" style={{ padding: '6px 12px', background: '#fee2e2', color: '#991b1b', border: '1px solid #ef4444' }} onClick={() => handleDeleteVoter(r.reported_voter_id)}>
+                              Delete Voter
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     </Fragment>

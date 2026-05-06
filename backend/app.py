@@ -133,7 +133,7 @@ def get_election_config():
         return jsonify({"success": False, "message": "User not found"}), 404
 
     cfg = _get_election_cfg() or {}
-    out = {k: cfg.get(k) for k in ["phase", "nomination_last_date", "notes"]}
+    out = {k: cfg.get(k) for k in ["phase", "nomination_start_date", "nomination_last_date", "notes"]}
     return jsonify({"success": True, "config": out}), 200
 
 
@@ -154,6 +154,7 @@ def set_election_config():
 
     data = request.json or {}
     phase = data.get("phase")
+    nomination_start_date = data.get("nomination_start_date")
     nomination_last_date = data.get("nomination_last_date")
     notes = data.get("notes")
 
@@ -163,6 +164,7 @@ def set_election_config():
     update = {
         "key": "default",
         "phase": phase,
+        "nomination_start_date": nomination_start_date,
         "nomination_last_date": nomination_last_date,
         "notes": notes,
         "updated_at": datetime.datetime.utcnow(),
@@ -172,13 +174,17 @@ def set_election_config():
     try:
         election_config.update_one({"key": "default"}, {"$set": update}, upsert=True)
 
-        # When nominations are opened, notify all voters with deadline.
+        # When nominations are opened, notify all voters with dates.
         new_in_nomination = _is_nomination_phase({"phase": phase})
         if new_in_nomination and not prev_in_nomination:
+            start_text = f"Opens: {nomination_start_date}" if nomination_start_date else ""
             deadline_text = _format_deadline_text(nomination_last_date)
+            msg_parts = ["Candidate applications portal has been scheduled."]
+            if start_text: msg_parts.append(start_text)
+            msg_parts.append(deadline_text)
             notif = {
-                "title": "Nominations Open",
-                "message": f"Candidate applications are now open. {deadline_text}",
+                "title": "📢 Candidate Portal Open",
+                "message": " | ".join(msg_parts),
                 "created_by": str(user.get("_id")),
                 "created_at": datetime.datetime.utcnow()
             }
@@ -272,7 +278,7 @@ def get_my_candidate_application():
         "phone_no": user.get("phone_no")
     }
 
-    cfg_out = {k: (cfg.get(k) if cfg else None) for k in ["phase", "nomination_last_date", "notes"]}
+    cfg_out = {k: (cfg.get(k) if cfg else None) for k in ["phase", "nomination_start_date", "nomination_last_date", "notes"]}
 
     return jsonify({
         "success": True,
@@ -995,11 +1001,16 @@ def get_notifications():
     # Get all notifications, sorted by most recent first
     all_notifications = list(notifications.find({}).sort("created_at", -1))
     
-    # Convert ObjectId to string
+    # Convert ObjectId to string and ensure ISO date with Z for UTC
     for notif in all_notifications:
         notif["_id"] = str(notif["_id"])
         if isinstance(notif.get("created_at"), datetime.datetime):
-            notif["created_at"] = notif["created_at"].isoformat()
+            # Append Z to indicate UTC if it's missing, for easier frontend parsing
+            dt = notif["created_at"]
+            if dt.tzinfo is None:
+                notif["created_at"] = dt.replace(tzinfo=datetime.timezone.utc).isoformat()
+            else:
+                notif["created_at"] = dt.isoformat()
     
     return jsonify({
         "success": True,
@@ -1035,7 +1046,7 @@ def create_notification():
         "title": title,
         "message": message,
         "created_by": str(user["_id"]),
-        "created_at": datetime.datetime.utcnow()
+        "created_at": datetime.datetime.now(datetime.timezone.utc)
     }
     
     result = notifications.insert_one(notification_data)
@@ -1045,6 +1056,72 @@ def create_notification():
         "message": "Notification created successfully",
         "notification_id": str(result.inserted_id)
     }), 201
+
+
+@app.route("/api/notifications/<notif_id>", methods=["DELETE"])
+def delete_notification(notif_id):
+    """Delete a notification permanently (Admin only)"""
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response:
+        return error_response, status_code
+    
+    if not user:
+        return jsonify({"success": False, "message": "User not found"}), 404
+        
+    if user.get("user_type") != "admin":
+        return jsonify({"success": False, "message": "Only admins can delete notifications"}), 403
+
+    try:
+        from bson import ObjectId
+        result = notifications.delete_one({"_id": ObjectId(notif_id)})
+        
+        if result.deleted_count == 0:
+            return jsonify({"success": False, "message": "Notification not found"}), 404
+            
+        return jsonify({"success": True, "message": "Notification deleted"}), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Failed to delete notification: {str(e)}"}), 500
+
+
+@app.route("/api/notifications/<notif_id>", methods=["PUT"])
+def edit_notification(notif_id):
+    """Edit an existing notification (Admin only)"""
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response:
+        return error_response, status_code
+    
+    if not user:
+        return jsonify({"success": False, "message": "User not found"}), 404
+        
+    if user.get("user_type") != "admin":
+        return jsonify({"success": False, "message": "Only admins can edit notifications"}), 403
+
+    data = request.json or {}
+    title = data.get("title")
+    message = data.get("message")
+
+    if not message:
+        return jsonify({"success": False, "message": "Notification message is required"}), 400
+
+    try:
+        from bson import ObjectId
+        update_data = {
+            "title": title or "Important Update",
+            "message": message,
+            "updated_at": datetime.datetime.now(datetime.timezone.utc)
+        }
+        
+        result = notifications.update_one(
+            {"_id": ObjectId(notif_id)},
+            {"$set": update_data}
+        )
+        
+        if result.matched_count == 0:
+            return jsonify({"success": False, "message": "Notification not found"}), 404
+            
+        return jsonify({"success": True, "message": "Notification updated"}), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Failed to update notification: {str(e)}"}), 500
 
 
 @app.route("/api/add-voter", methods=["POST"])
@@ -1102,61 +1179,44 @@ def add_voter():
     except ValueError:
         return jsonify({"success": False, "message": "Invalid date format"}), 400
     
-    if not photo_file:
-        return jsonify({"success": False, "message": "Photo is required"}), 400
-    
-    if not fingerprint_template:
-        return jsonify({"success": False, "message": "Fingerprint is required"}), 400
-    
+    # Photo is optional -- voter can upload later from their profile
+    photo_url = None
+    photo_b64 = None
+    if photo_file:
+        try:
+            photo_bytes = photo_file.read()
+            try:
+                photo_b64 = __import__('base64').b64encode(photo_bytes).decode('utf-8')
+            except Exception:
+                photo_b64 = None
+            try:
+                photo_file.stream.seek(0)
+            except Exception:
+                pass
+            import os as _os
+            from werkzeug.utils import secure_filename as _sf
+            _os.makedirs(UPLOAD_PHOTOS_DIR, exist_ok=True)
+            filename = _sf(f"{voter_id}_{photo_file.filename}")
+            photo_file.save(_os.path.join(UPLOAD_PHOTOS_DIR, filename))
+            photo_url = f"uploads/photos/{filename}"
+        except Exception as e:
+            return jsonify({"success": False, "message": f"Error saving photo: {str(e)}"}), 500
+
     # Check if voter_id already exists
     if users.find_one({"voter_id": voter_id}):
         return jsonify({"success": False, "message": "Voter ID already exists"}), 409
-    
+
     # Check if email already exists
     if users.find_one({"email": email}):
         return jsonify({"success": False, "message": "Email already exists"}), 409
-    
-    # Save photo
-    # We'll store the image both on disk (for compatibility) and as base64 in DB
-    try:
-        # Read file bytes for DB storage
-        photo_bytes = photo_file.read()
-        try:
-            photo_b64 = base64.b64encode(photo_bytes).decode('utf-8')
-        except Exception:
-            photo_b64 = None
-
-        # Reset stream pointer so we can save to disk
-        try:
-            photo_file.stream.seek(0)
-        except Exception:
-            pass
-
-        upload_folder = UPLOAD_PHOTOS_DIR
-        os.makedirs(upload_folder, exist_ok=True)
-        
-        filename = secure_filename(f"{voter_id}_{photo_file.filename}")
-        photo_path = os.path.join(upload_folder, filename)
-        photo_file.save(photo_path)
-        
-        # Store relative path for database
-        photo_url = f"uploads/photos/{filename}"
-    except Exception as e:
-        return jsonify({"success": False, "message": f"Error saving photo: {str(e)}"}), 500
-    
-    # Parse fingerprint template
-    try:
-        fingerprint_data = json.loads(fingerprint_template)
-    except:
-        fingerprint_data = fingerprint_template
 
     # Parse address JSON if provided
     try:
-        parsed_address = json.loads(address) if address else address
+        parsed_address = __import__('json').loads(address) if address else address
     except Exception:
         parsed_address = address
 
-    # Server-side validations: name (letters only) and phone (10 digits)
+    # Server-side validations
     import re
     if not re.match(r'^[A-Za-z\s]+$', full_name.strip()):
         return jsonify({"success": False, "message": "Name should contain only letters and spaces"}), 400
@@ -1164,8 +1224,8 @@ def add_voter():
     phone_digits = ''.join(filter(str.isdigit, phone_no or ''))
     if not phone_digits or len(phone_digits) != 10:
         return jsonify({"success": False, "message": "Phone number must be exactly 10 digits"}), 400
-    
-    # Create voter data for MongoDB
+
+    # Create voter record
     voter_data = {
         "full_name": full_name,
         "date_of_birth": date_of_birth,
@@ -1176,9 +1236,8 @@ def add_voter():
         "branch_name": branch_name,
         "photo_url": photo_url,
         "photo_data": photo_b64,
-        "fingerprint_template": fingerprint_data,
         "user_type": "voter",
-        "has_account": False,  # Track if voter has created account
+        "has_account": False,
         "created_at": datetime.datetime.utcnow(),
         "updated_at": datetime.datetime.utcnow()
     }
@@ -1205,6 +1264,55 @@ def add_voter():
         error_msg = str(e)
         print(f"Database error: {error_msg}")
         return jsonify({"success": False, "message": f"Database error: {error_msg}"}), 500
+
+
+@app.route("/api/voter/upload-photo", methods=["POST"])
+def voter_upload_photo():
+    """Allow a voter to upload/update their own profile photo"""
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response:
+        return error_response, status_code
+    if not user:
+        return jsonify({"success": False, "message": "User not found"}), 404
+    if user.get("user_type") != "voter":
+        return jsonify({"success": False, "message": "Only voters can upload their photo"}), 403
+
+    photo_file = request.files.get("photo")
+    if not photo_file:
+        return jsonify({"success": False, "message": "No photo file provided"}), 400
+
+    allowed_exts = {"jpg", "jpeg", "png", "webp"}
+    ext = os.path.splitext(photo_file.filename or "")[1].lower().lstrip(".")
+    if ext not in allowed_exts:
+        return jsonify({"success": False, "message": "Only JPG/PNG/WEBP images are allowed"}), 400
+
+    try:
+        photo_file.stream.seek(0, os.SEEK_END)
+        size = photo_file.stream.tell()
+        photo_file.stream.seek(0)
+        if size > 5 * 1024 * 1024:
+            return jsonify({"success": False, "message": "Photo must be under 5 MB"}), 400
+    except Exception:
+        pass
+
+    voter_id = user.get("voter_id", str(user["_id"]))
+    try:
+        photo_bytes = photo_file.read()
+        photo_b64 = base64.b64encode(photo_bytes).decode("utf-8")
+        photo_file.stream.seek(0)
+        os.makedirs(UPLOAD_PHOTOS_DIR, exist_ok=True)
+        filename = secure_filename(f"{voter_id}_profile.{ext}")
+        photo_path = os.path.join(UPLOAD_PHOTOS_DIR, filename)
+        photo_file.save(photo_path)
+        photo_url = f"uploads/photos/{filename}"
+
+        users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {"photo_url": photo_url, "photo_data": photo_b64, "updated_at": datetime.datetime.utcnow()}}
+        )
+        return jsonify({"success": True, "message": "Photo uploaded successfully", "photo_url": photo_url}), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Error saving photo: {str(e)}"}), 500
 
 
 @app.route("/api/check-scanner", methods=["GET"])
@@ -1832,12 +1940,38 @@ def delete_voter(voter_id):
         return jsonify({"success": False, "message": "Only admins can delete voters"}), 403
 
     try:
+        # Delete the voter
         result = users.delete_one({"voter_id": voter_id, "user_type": "voter"})
         if result.deleted_count == 0:
             return jsonify({"success": False, "message": "Voter not found"}), 404
-        return jsonify({"success": True, "message": "Voter deleted"}), 200
+        
+        # Also cleanup any reports associated with this voter
+        reports.delete_many({"reported_voter_id": voter_id})
+        
+        return jsonify({"success": True, "message": "Voter and associated reports deleted"}), 200
     except Exception as e:
         return jsonify({"success": False, "message": f"Failed to delete voter: {str(e)}"}), 500
+
+
+@app.route("/api/report/<report_id>", methods=["DELETE"])
+def delete_report(report_id):
+    """Delete (dismiss) a report record (Admin only)"""
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response:
+        return error_response, status_code
+    if not user:
+        return jsonify({"success": False, "message": "User not found"}), 404
+    if user.get("user_type") != "admin":
+        return jsonify({"success": False, "message": "Only admins can dismiss reports"}), 403
+
+    try:
+        from bson import ObjectId
+        result = reports.delete_one({"_id": ObjectId(report_id)})
+        if result.deleted_count == 0:
+            return jsonify({"success": False, "message": "Report not found"}), 404
+        return jsonify({"success": True, "message": "Report dismissed"}), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Failed to dismiss report: {str(e)}"}), 500
 
 
 @app.route("/api/voter/<voter_id>", methods=["PUT"])
@@ -1877,6 +2011,7 @@ def get_blockchain_status():
     """Get general status of the blockchain connection and contract."""
     connected = blockchain.is_connected()
     config = blockchain_config.find_one({"key": "active_contract"})
+    schedule = blockchain_config.find_one({"key": "schedule"})
     
     out = {
         "success": True,
@@ -1885,17 +2020,99 @@ def get_blockchain_status():
         "contract_address": config.get("address") if config else None,
         "voting_open": False,
         "candidate_count": 0,
-        "total_votes": 0
+        "total_votes": 0,
+        "schedule": None
     }
+
+    if schedule:
+        # ISO strings -> datetime
+        s_start = schedule.get("start_time")
+        s_end = schedule.get("end_time")
+        out["schedule"] = {
+            "start_time": s_start,
+            "end_time": s_end,
+            "duration_hours": schedule.get("duration_hours")
+        }
 
     if connected and config:
         try:
             status = blockchain.get_status(config["address"])
             out.update(status)
+            
+            # ── Automated Scheduling Logic ───────────────────────────────
+            # Only auto-transition if GANACHE is up and contract is ready
+            now = datetime.datetime.utcnow()
+            
+            if schedule:
+                try:
+                    dt_start = datetime.datetime.fromisoformat(schedule["start_time"].replace("Z", "+00:00")).replace(tzinfo=None)
+                    dt_end = datetime.datetime.fromisoformat(schedule["end_time"].replace("Z", "+00:00")).replace(tzinfo=None)
+                    
+                    # AUTO START
+                    if not out["voting_open"] and out["total_votes"] == 0:
+                        if now >= dt_start and now < dt_end:
+                            print(f"AUTO-SCHEDULER: Starting voting at {now}")
+                            blockchain.start_voting(config["address"])
+                            out["voting_open"] = True
+                    
+                    # AUTO END
+                    if out["voting_open"] and now >= dt_end:
+                        print(f"AUTO-SCHEDULER: Ending voting at {now}")
+                        blockchain.end_voting(config["address"])
+                        out["voting_open"] = False
+                        
+                except Exception as ex:
+                    print(f"AUTO-SCHEDULER ERROR: {ex}")
+            # ─────────────────────────────────────────────────────────────
+            
         except Exception:
             pass
             
     return jsonify(out), 200
+
+
+@app.route("/api/blockchain/schedule", methods=["POST"])
+def schedule_blockchain_voting():
+    """Schedule the start and duration of the election (Admin only)."""
+    user, error_response, status_code = verify_token_and_get_user()
+    if error_response: return error_response, status_code
+    if user.get("user_type") != "admin": return jsonify({"success": False, "message": "Admin only"}), 403
+
+    data = request.json or {}
+    start_time_str = data.get("start_time")
+    duration_hours = data.get("duration_hours")
+
+    if not start_time_str or duration_hours is None:
+        return jsonify({"success": False, "message": "start_time and duration_hours are required"}), 400
+
+    try:
+        # Expected: ISO format from JS
+        dt_start = datetime.datetime.fromisoformat(start_time_str.replace("Z", "+00:00")).replace(tzinfo=None)
+        
+        if dt_start <= datetime.datetime.utcnow():
+            return jsonify({"success": False, "message": "Start time must be in the future"}), 400
+            
+        dt_end = dt_start + datetime.timedelta(hours=float(duration_hours))
+        
+        schedule = {
+            "key": "schedule",
+            "start_time": dt_start.isoformat() + "Z", # Store as UTC ISO
+            "end_time": dt_end.isoformat() + "Z",
+            "duration_hours": float(duration_hours),
+            "updated_at": datetime.datetime.utcnow(),
+            "updated_by": str(user["_id"])
+        }
+        
+        blockchain_config.update_one({"key": "schedule"}, {"$set": schedule}, upsert=True)
+        
+        return jsonify({
+            "success": True, 
+            "message": "Election scheduled successfully",
+            "start_time": schedule["start_time"],
+            "end_time": schedule["end_time"]
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Scheduling failed: {str(e)}"}), 500
 
 
 @app.route("/api/blockchain/deploy", methods=["POST"])

@@ -130,6 +130,26 @@ function AdminVotersList() {
     }
   };
 
+  const handleDelete = async (voterId) => {
+    if (!window.confirm(`Are you sure you want to delete voter ${voterId}?`)) return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await api.delete(`/voter/${voterId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.data.success) {
+        setMessage(`Voter ${voterId} deleted`);
+        fetchVoters();
+      } else {
+        setMessage(res.data.message || "Failed to delete voter");
+      }
+    } catch (err) {
+      setMessage(err.response?.data?.message || "Failed to delete voter");
+    }
+  };
+
   return (
     <div className="vd-wrapper">
       <header className="vd-header">
@@ -196,9 +216,14 @@ function AdminVotersList() {
                         <td>{voter.branch_name || "—"}</td>
                         <td>{formatAddress(voter.address)}</td>
                         <td>
-                          <button className="vd-tile-btn" style={{ padding: "6px 12px", maxWidth: 120 }} onClick={() => openEdit(voter)}>
-                            Modify
-                          </button>
+                          <div style={{ display: "flex", gap: "8px" }}>
+                            <button className="vd-tile-btn" style={{ padding: "6px 12px", maxWidth: 80 }} onClick={() => openEdit(voter)}>
+                              Modify
+                            </button>
+                            <button className="btn-cancel" style={{ padding: "6px 12px", background: "#fee2e2", color: "#991b1b", border: "1px solid #ef4444" }} onClick={() => handleDelete(voter.voter_id)}>
+                              Delete
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))
